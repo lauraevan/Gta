@@ -221,10 +221,35 @@
    =================================================================== */
 'use strict';
 
+// ---- On-screen error reporter: NEVER fail with a silent black screen ----
+function showError(msg){
+  try{
+    var box=document.getElementById('errbox');
+    if(!box){
+      box=document.createElement('div'); box.id='errbox';
+      box.style.cssText='position:fixed;left:0;right:0;top:0;z-index:99999;background:#300;color:#fff;'
+        +'font:13px/1.4 monospace;padding:12px 14px;white-space:pre-wrap;max-height:60%;overflow:auto;'
+        +'border-bottom:3px solid #f55;';
+      (document.body||document.documentElement).appendChild(box);
+    }
+    box.textContent='⚠ '+msg+'\n\nTry: hard-refresh (or a private tab). If it keeps happening, screenshot this and send it.';
+  }catch(e){}
+}
+window.addEventListener('error',function(e){ showError((e.message||'Script error')+(e.filename?(' @'+(e.lineno||'')):'')); });
+window.addEventListener('unhandledrejection',function(e){ showError('Promise: '+((e.reason&&e.reason.message)||e.reason||'?')); });
+
 // ---- Guard: ensure Three loaded ----
 if (typeof THREE === 'undefined') {
-  document.getElementById('loadMsg').textContent = 'ERROR: Three.js failed to load (network).';
+  showError('Three.js failed to load. The game engine is embedded in this file — if you see this, the file may be truncated or blocked. Re-download index.html or open it via GitHub Pages.');
 }
+// ---- Guard: ensure WebGL is available ----
+(function(){
+  try{
+    var c=document.createElement('canvas');
+    var gl=c.getContext('webgl')||c.getContext('experimental-webgl');
+    if(!gl) showError('WebGL is not available in this browser. Enable hardware acceleration / WebGL, or try Chrome.');
+  }catch(e){ showError('WebGL check failed: '+e.message); }
+})();
 
 // =================== GLOBAL STATE ===================
 const G = {
@@ -552,7 +577,8 @@ function* generateWorld(){
       const isDown=downtown.has(key);
       // distance from center → taller toward downtown/core, shorter at edges (residential)
       const edge=Math.max(Math.abs(bx-cityMid),Math.abs(bz-cityMid))/cityMid; // 0 center .. 1 edge
-      const count=isDown?randi(2,4):randi(3,8);
+      let count=isDown?randi(2,4):randi(3,8);
+      if(LOW) count=Math.max(1,Math.round(count*0.55)); // lighter scene on phones
       for(let k=0;k<count;k++){
         const big=isDown||edge<0.4;
         const fw=big?rand(16,40):rand(10,28), fd=big?rand(16,40):rand(10,28);
@@ -669,8 +695,8 @@ function makeBuilding(x,z,w,d,h,opts){
   G.scene.add(m); G.buildings.push(m);
   m.userData.winMat=mat; m.userData.h=h;
   addAABB(m,w,h,d);
-  // ground-floor storefront band (darker, with awning hint)
-  if(h>14){
+  // ground-floor storefront band (darker, with awning hint) — skipped on mobile
+  if(h>14 && !LOW){
     const base=new THREE.Mesh(new THREE.BoxGeometry(w+0.3,4,d+0.3),
       new THREE.MeshStandardMaterial({color:0x1c1c20,roughness:0.6,metalness:0.2}));
     base.position.set(x,2,z); base.castShadow=true; G.scene.add(base);
@@ -806,48 +832,14 @@ function makePark(){
 
 function makeHarbor(offset,zedge){
   const z=-G.CITY/2-30;
-  // custom water shader: animated gerstner-ish ripples + sun specular + fresnel sky tint
-  const waterMat=new THREE.ShaderMaterial({
-    transparent:true,
-    uniforms:{
-      uTime:{value:0},
-      uDeep:{value:new THREE.Color(0x16323f)},
-      uShallow:{value:new THREE.Color(0x2f6a7a)},
-      uSky:{value:new THREE.Color(0x87b8d8)},
-      uSun:{value:new THREE.Vector3(0.4,0.7,0.3)},
-      uCam:{value:new THREE.Vector3()},
-    },
-    vertexShader:`
-      uniform float uTime; varying vec3 vW; varying vec3 vN;
-      void main(){
-        vec3 p=position;
-        float w = sin(p.x*0.18 + uTime*1.3)*0.35 + cos(p.y*0.22 + uTime*1.1)*0.3
-                + sin((p.x+p.y)*0.12 + uTime*0.7)*0.25;
-        p.z += w;
-        // normal from wave derivative
-        float dx = cos(p.x*0.18 + uTime*1.3)*0.18*0.35 + cos((p.x+p.y)*0.12 + uTime*0.7)*0.12*0.25;
-        float dy = -sin(p.y*0.22 + uTime*1.1)*0.22*0.3 + cos((p.x+p.y)*0.12 + uTime*0.7)*0.12*0.25;
-        vN = normalize(vec3(-dx,-dy,1.0));
-        vec4 wp = modelMatrix*vec4(p,1.0); vW=wp.xyz;
-        gl_Position = projectionMatrix*viewMatrix*wp;
-      }`,
-    fragmentShader:`
-      uniform vec3 uDeep,uShallow,uSky,uSun,uCam; varying vec3 vW; varying vec3 vN;
-      void main(){
-        vec3 N=normalize(vec3(vN.x, vN.z, vN.y)); // plane is rotated -90x
-        vec3 V=normalize(uCam-vW);
-        float fres=pow(1.0-max(dot(N,V),0.0),3.0);
-        vec3 L=normalize(uSun);
-        vec3 R=reflect(-L,N);
-        float spec=pow(max(dot(R,V),0.0),60.0);
-        vec3 base=mix(uDeep,uShallow,clamp(N.y,0.0,1.0));
-        vec3 col=mix(base,uSky,fres*0.7) + spec*vec3(1.0,0.95,0.8)*1.5;
-        gl_FragColor=vec4(col,0.9);
-      }`,
-  });
-  const water=new THREE.Mesh(new THREE.PlaneGeometry(G.CITY+200,120, LOW?32:64, LOW?12:24),waterMat);
+  // Safe standard-material water (no custom GLSL → compiles on every GPU).
+  // Reflective look via metalness/low-roughness; ripples via animated vertices.
+  const waterMat=new THREE.MeshStandardMaterial({color:0x21505f,roughness:0.18,metalness:0.6,
+    transparent:true,opacity:0.9});
+  const water=new THREE.Mesh(new THREE.PlaneGeometry(G.CITY+200,120, LOW?24:48, LOW?8:18),waterMat);
   water.rotation.x=-Math.PI/2; water.position.set(0,-0.3,z-40); G.scene.add(water);
   G.water=water; G.waterMat=waterMat;
+  G.water.userData.base=water.geometry.attributes.position.array.slice();
   // docks
   for(let i=0;i<3;i++){
     const dx=offset+i*CELL*4;
@@ -1012,7 +1004,7 @@ function spawnTraffic(){
   const half=G.CITY/2, offset=-half+CELL/2;
   const types=['sedan','sports','suv','pickup','taxi','bus','moto'];
   // parked + traffic
-  for(let i=0;i<40;i++){
+  for(let i=0;i<(LOW?22:40);i++){
     const type=choice(types);
     // place near a road
     const i2=randi(0,GRID-1), j2=randi(0,GRID-1);
@@ -2322,13 +2314,7 @@ function updateDayNight(dt){
   G.sun.color.lerp(col,0.05); G.sun.intensity=lerp(G.sun.intensity,inten,0.05);
   G.ambient.intensity=lerp(G.ambient.intensity,amb,0.05);
   G.scene.fog.color.lerp(sky,0.05);
-  if(G.skyMat){
-    const u=G.skyMat.uniforms;
-    u.bottomColor.value.lerp(sky,0.05);
-    u.topColor.value.lerp(sky.clone().multiplyScalar(0.7).lerp(new THREE.Color(0x2a5a9a),0.5),0.05);
-    u.sunDir.value.copy(G.sun.position).normalize();
-    u.sunColor.value.lerp(col.clone().lerp(new THREE.Color(0xffffff),0.4),0.05);
-  }
+  if(G.scene.background && G.scene.background.lerp) G.scene.background.lerp(sky,0.05);
   // building windows + beacons light up as it gets dark
   const night=(hour<6.5||hour>18.5);
   const winI=night?1.0:0;
@@ -2404,12 +2390,15 @@ function updateWanted(dt){
 
 // =================== WATER ANIMATION ===================
 function updateWater(t){
-  if(!G.waterMat) return;
-  const u=G.waterMat.uniforms;
-  u.uTime.value=t;
-  u.uCam.value.copy(G.camera.position);
-  u.uSun.value.copy(G.sun.position).normalize();
-  u.uSky.value.copy(G.scene.fog.color);
+  if(!G.water||!G.water.userData.base) return;
+  const pos=G.water.geometry.attributes.position, base=G.water.userData.base;
+  for(let i=0;i<pos.count;i++){
+    const x=base[i*3], y=base[i*3+1];
+    pos.array[i*3+2]=Math.sin(x*0.12+t*1.3)*0.5 + Math.cos(y*0.16+t*1.0)*0.4;
+  }
+  pos.needsUpdate=true;
+  // tint water toward the sky color so it reads correctly day & night
+  if(G.waterMat) G.waterMat.color.copy(G.scene.fog.color).multiplyScalar(0.5).lerp(new THREE.Color(0x21505f),0.5);
 }
 
 // =================== FOUNTAIN SPRAY ===================
@@ -2476,57 +2465,53 @@ function loop(now){
     // damage flash decay
     const cur=parseFloat(UI.dmgFlash.style.opacity)||0; if(cur>0) UI.dmgFlash.style.opacity=Math.max(0,cur-dt*1.5);
   }
-  if(G.renderer) G.renderer.render(G.scene,G.camera);
+  if(G.renderer){
+    try{ G.renderer.render(G.scene,G.camera); }
+    catch(e){ if(!G._renderErr){ G._renderErr=true; showError('Render error: '+e.message); } }
+  }
 }
 
 // =================== INIT ===================
 function initThree(){
   G.scene=new THREE.Scene();
-  G.scene.fog=new THREE.FogExp2(0xC8A882,0.008);
+  G.scene.fog=new THREE.FogExp2(0xC8A882,0.0085);
+  G.scene.background=new THREE.Color(0x87b8d8); // bulletproof flat sky (no GLSL)
   G.camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,2000);
   G.camera.position.set(0,10,20);
-  G.renderer=new THREE.WebGLRenderer({antialias:!LOW,powerPreference:'high-performance'});
+
+  // Renderer: try ideal options, fall back to a minimal config if that fails.
+  try{
+    G.renderer=new THREE.WebGLRenderer({antialias:!LOW,powerPreference:'high-performance'});
+  }catch(e){
+    try{ G.renderer=new THREE.WebGLRenderer(); }
+    catch(e2){ showError('Could not create WebGL renderer: '+e2.message); throw e2; }
+  }
   G.renderer.setSize(innerWidth,innerHeight);
-  G.renderer.setPixelRatio(Math.min(devicePixelRatio, LOW?1.25:2));
-  G.renderer.shadowMap.enabled=true; G.renderer.shadowMap.type=LOW?THREE.PCFShadowMap:THREE.PCFSoftShadowMap;
+  G.renderer.setPixelRatio(Math.min(devicePixelRatio, LOW?1:2));
+  // Shadows are a common cause of black screens / crashes on mobile GPUs — off on LOW.
+  G.renderer.shadowMap.enabled=!LOW;
+  if(!LOW) G.renderer.shadowMap.type=THREE.PCFSoftShadowMap;
   G.renderer.toneMapping=THREE.ACESFilmicToneMapping; G.renderer.toneMappingExposure=1.0;
   document.getElementById('game').appendChild(G.renderer.domElement);
 
-  G.ambient=new THREE.AmbientLight(0x404060,0.4); G.scene.add(G.ambient);
+  // Recover gracefully if the GPU drops the context (memory pressure on phones).
+  G.renderer.domElement.addEventListener('webglcontextlost',function(ev){ ev.preventDefault();
+    showError('Graphics context was lost (likely low memory). Close other tabs/apps and reload.'); },false);
+
+  G.ambient=new THREE.AmbientLight(0x404060,0.5); G.scene.add(G.ambient);
   G.sun=new THREE.DirectionalLight(0xFFF5E0,1.2); G.sun.position.set(200,300,100);
-  G.sun.castShadow=true; G.sun.shadow.mapSize.set(LOW?1024:2048,LOW?1024:2048);
-  G.sun.shadow.camera.left=-250; G.sun.shadow.camera.right=250;
-  G.sun.shadow.camera.top=250; G.sun.shadow.camera.bottom=-250;
-  G.sun.shadow.camera.near=1; G.sun.shadow.camera.far=800;
+  if(!LOW){
+    G.sun.castShadow=true; G.sun.shadow.mapSize.set(2048,2048);
+    G.sun.shadow.camera.left=-250; G.sun.shadow.camera.right=250;
+    G.sun.shadow.camera.top=250; G.sun.shadow.camera.bottom=-250;
+    G.sun.shadow.camera.near=1; G.sun.shadow.camera.far=800;
+  }
   G.scene.add(G.sun); G.scene.add(G.sun.target);
+  // hemisphere fill so unlit faces aren't pitch black (helps mobile without shadows)
+  G.scene.add(new THREE.HemisphereLight(0x9fb8d8,0x3a3a30,0.35));
+  G.skyMat=null;
 
-  // shadow distance shorter on mobile to lighten fill cost
-  if(LOW){ G.sun.shadow.camera.left=-120; G.sun.shadow.camera.right=120; G.sun.shadow.camera.top=120; G.sun.shadow.camera.bottom=-120; }
-  // sky dome with horizon gradient + sun disc & glow
-  const skyGeo=new THREE.SphereGeometry(900,32,16);
-  G.skyMat=new THREE.ShaderMaterial({
-    uniforms:{
-      topColor:{value:new THREE.Color(0x3a6fb0)},
-      bottomColor:{value:new THREE.Color(0xC8A882)},
-      sunDir:{value:new THREE.Vector3(0.4,0.6,0.3)},
-      sunColor:{value:new THREE.Color(0xfff3d0)},
-    },
-    vertexShader:`varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
-    fragmentShader:`uniform vec3 topColor; uniform vec3 bottomColor; uniform vec3 sunDir; uniform vec3 sunColor; varying vec3 vP;
-      void main(){
-        vec3 d=normalize(vP);
-        float h=clamp(d.y*0.5+0.5,0.0,1.0);
-        vec3 sky=mix(bottomColor,topColor,pow(h,0.8));
-        float sd=max(dot(d,normalize(sunDir)),0.0);
-        sky += sunColor*pow(sd,180.0)*1.4;          // sun disc
-        sky += sunColor*pow(sd,8.0)*0.18;           // sun glow halo
-        gl_FragColor=vec4(sky,1.0);
-      }`,
-    side:THREE.BackSide,fog:false
-  });
-  G.scene.add(new THREE.Mesh(skyGeo,G.skyMat));
-
-  G.particles=new ParticleSystem(G.scene,LOW?200:400);
+  G.particles=new ParticleSystem(G.scene,LOW?160:400);
   window.addEventListener('resize',()=>{ G.camera.aspect=innerWidth/innerHeight; G.camera.updateProjectionMatrix(); G.renderer.setSize(innerWidth,innerHeight); });
 }
 
