@@ -229,7 +229,7 @@ if (typeof THREE === 'undefined') {
 // =================== GLOBAL STATE ===================
 const G = {
   scene:null, camera:null, renderer:null, clock:null,
-  player:null, vehicles:[], peds:[], police:[], bullets:[], pickups:[],
+  player:null, vehicles:[], peds:[], police:[], copsOnFoot:[], heli:null, bullets:[], pickups:[],
   buildings:[], buildingAABBs:[], roads:[], trafficLights:[], markers:[],
   particles:null, audio:null, world:null, mission:null,
   keys:{}, mouse:{x:0,y:0,down:false,right:false},
@@ -1212,6 +1212,7 @@ function drawMinimap(){
   // police dots
   ctx.fillStyle='#ff2222';
   G.police.forEach(p=>{ if(Math.abs(p.position.x-px)<110&&Math.abs(p.position.z-pz)<110){ const q=tx(p.position.x,p.position.z); ctx.beginPath(); ctx.arc(q[0],q[1],3,0,TAU); ctx.fill(); }});
+  G.copsOnFoot.forEach(c=>{ if(Math.abs(c.mesh.position.x-px)<110&&Math.abs(c.mesh.position.z-pz)<110){ const q=tx(c.mesh.position.x,c.mesh.position.z); ctx.beginPath(); ctx.arc(q[0],q[1],2,0,TAU); ctx.fill(); }});
   // waypoint
   if(G.mission&&G.mission.waypoint){ const w=G.mission.waypoint; const p=tx(w.x,w.z);
     ctx.fillStyle=(Math.floor(performance.now()/300)%2)?'#ffff00':'#aa8800'; ctx.beginPath(); ctx.arc(clamp(p[0],4,W-4),clamp(p[1],4,H-4),4,0,TAU); ctx.fill(); }
@@ -1228,14 +1229,48 @@ function addWanted(amount){
   ensurePolice();
 }
 function clearWanted(){ G.wanted=0; G.police.forEach(p=>{G.scene.remove(p);}); G.police.length=0; G.audio.stopSiren();
+  G.copsOnFoot.forEach(c=>G.scene.remove(c.mesh)); G.copsOnFoot.length=0;
   if(G.heli){ G.scene.remove(G.heli.group); G.heli=null; } }
 
 function ensurePolice(){
   const want=Math.ceil(G.wanted);
-  let desired=0;
-  if(want>=1) desired=2; if(want>=2) desired=4; if(want>=3) desired=6; if(want>=4) desired=7; if(want>=5) desired=8;
+  let desired=0, footDesired=0;
+  if(want>=1){ desired=2; footDesired=2; }
+  if(want>=2){ desired=4; footDesired=4; }
+  if(want>=3){ desired=6; footDesired=6; }   // SWAT w/ riot shields start here
+  if(want>=4){ desired=7; footDesired=8; }
+  if(want>=5){ desired=8; footDesired=10; }
   while(G.police.length<desired){ spawnPoliceCar(); }
+  while(G.copsOnFoot.length<footDesired){ spawnCop(want); }
   if(G.wanted>0) G.audio.startSiren();
+}
+
+/* ---------- On-foot police officers ----------
+   They flank you, carry bullet-blocking riot shields at high tiers, and will
+   either arrest you (low threat) or gun you down (high threat). */
+function spawnCop(tier){
+  const px=G.player.mesh.position.x, pz=G.player.mesh.position.z;
+  const a=rand(0,TAU), r=rand(35,60);
+  const x=px+Math.cos(a)*r, z=pz+Math.sin(a)*r;
+  const swat = tier>=3;
+  const outfit = swat ? {skin:0xC68642,jacket:0x1a2230,pants:0x12161e}   // SWAT black
+                      : {skin:0xC68642,jacket:0x20356b,pants:0x1a2440};  // beat cop navy
+  const mesh=makeHumanoid(outfit);
+  mesh.position.set(x,0,z); G.scene.add(mesh);
+  // riot shield at tier 3+ (blocks frontal bullets)
+  let shield=null;
+  if(tier>=3){
+    shield=new THREE.Mesh(new THREE.BoxGeometry(0.95,1.3,0.1),
+      new THREE.MeshStandardMaterial({color:0x1b2a44,metalness:0.6,roughness:0.3,transparent:true,opacity:0.92}));
+    shield.position.set(0.1,1.3,0.55); mesh.add(shield);
+    const txt=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.18,0.02),new THREE.MeshStandardMaterial({color:0xffd000,emissive:0xffd000,emissiveIntensity:0.3}));
+    txt.position.set(0.1,1.5,0.61); mesh.add(txt);
+  }
+  // assign a distinct flank angle so the squad surrounds the player
+  const idx=G.copsOnFoot.length;
+  G.copsOnFoot.push({mesh, hp: swat?60:35, state:'flank', shield,
+    flankAngle:(idx*1.7)%TAU, standoff:rand(10,16), shootCD:rand(0.6,1.6),
+    arrestTimer:0, phase:Math.random()*9, tier, swat});
 }
 function spawnPoliceCar(){
   const px=G.player.mesh.position.x, pz=G.player.mesh.position.z;
@@ -1266,6 +1301,8 @@ function createExplosion(x,y,z,radius,dmg){
   if(pd<radius){ damagePlayer(dmg*(1-pd/radius)); }
   G.peds.forEach(pe=>{ if(!pe.dead){ const d=Math.hypot(pe.mesh.position.x-x,pe.mesh.position.z-z); if(d<radius){ pe.hp-=dmg; pe.state='panic'; pe.pauseT=0.5; if(pe.hp<=0) killPed(pe); }}});
   G.vehicles.concat(G.police).forEach(v=>{ const d=Math.hypot(v.position.x-x,v.position.z-z); if(d<radius&&!v.userData.burned){ damageVehicle(v,dmg); }});
+  // explosions ignore riot shields
+  for(let i=G.copsOnFoot.length-1;i>=0;i--){ const c=G.copsOnFoot[i]; const d=Math.hypot(c.mesh.position.x-x,c.mesh.position.z-z); if(d<radius){ c.hp-=dmg; if(c.hp<=0) killCop(c); } }
 }
 
 // =================== DAMAGE ===================
@@ -1392,18 +1429,40 @@ function getAimDir(){
   return new THREE.Vector3(-Math.sin(ry),0,-Math.cos(ry)).normalize();
 }
 function hitscan(origin,dir,range,dmg){
-  // check peds & police & vehicles, nearest along ray
-  let bestT=range, hitPed=null, hitVeh=null;
+  // check peds, cops, police cars & vehicles — nearest along ray
+  let bestT=range, hitPed=null, hitVeh=null, hitCop=null, shieldBlock=false;
   const ro=origin, rd=dir;
-  G.peds.forEach(pe=>{ if(pe.dead) return; const t=raySphere(ro,rd,pe.mesh.position,1.2); if(t>0&&t<bestT){bestT=t;hitPed=pe;hitVeh=null;} });
-  G.police.concat(G.vehicles).forEach(v=>{ if(v.userData.burned)return; const t=raySphere(ro,rd,v.position,2); if(t>0&&t<bestT){bestT=t;hitVeh=v;hitPed=null;} });
+  G.peds.forEach(pe=>{ if(pe.dead) return; const t=raySphere(ro,rd,pe.mesh.position,1.2); if(t>0&&t<bestT){bestT=t;hitPed=pe;hitVeh=null;hitCop=null;} });
+  G.copsOnFoot.forEach(c=>{ const t=raySphere(ro,rd,c.mesh.position,0.9); if(t>0&&t<bestT){bestT=t;hitCop=c;hitPed=null;hitVeh=null;} });
+  G.police.concat(G.vehicles).forEach(v=>{ if(v.userData.burned)return; const t=raySphere(ro,rd,v.position,2); if(t>0&&t<bestT){bestT=t;hitVeh=v;hitPed=null;hitCop=null;} });
   const hp=new THREE.Vector3(ro.x+rd.x*bestT,ro.y+rd.y*bestT,ro.z+rd.z*bestT);
+  if(hitCop){
+    // Riot shield blocks bullets coming at the cop's FRONT — you must flank to hit them
+    if(hitCop.shield){
+      const fy = (hitCop.mesh.userData.facing!==undefined) ? hitCop.mesh.userData.facing : hitCop.mesh.rotation.y;
+      const fwd={x:Math.sin(fy),z:Math.cos(fy)};
+      const toShooter={x:ro.x-hitCop.mesh.position.x,z:ro.z-hitCop.mesh.position.z};
+      const tl=Math.hypot(toShooter.x,toShooter.z)||1;
+      const facing=(toShooter.x*fwd.x+toShooter.z*fwd.z)/tl; // 1 = shooting their front
+      if(facing>0.45) shieldBlock=true; // frontal ~110° arc → absorbed by shield; flank to bypass
+    }
+    if(shieldBlock){ G.particles.burst(hp.x,1.3,hp.z,'spark',3); G.audio.burst(0.04,1200,0.25,'bandpass'); return; }
+    hitCop.hp-=dmg; G.particles.spawn(hp.x,hp.y,hp.z,'spark');
+    if(hitCop.hp<=0) killCop(hitCop);
+    return;
+  }
   G.particles.spawn(hp.x,hp.y,hp.z,'spark');
   if(hitPed){ hitPed.hp-=dmg; hitPed.state='flee'; if(hitPed.hp<=0){ killPed(hitPed); addWanted(1); checkMissionKill(hitPed); }
     if(hitPed.gang){ enrageGang(hitPed); } }
   else if(hitVeh){ damageVehicle(hitVeh,dmg);
     if(hitVeh.userData.police){ /* shooting police */ }
   }
+}
+function killCop(c){
+  c.hp=0; // marked; updateCops removes it next tick and grants stars
+  G.scene.remove(c.mesh);
+  const i=G.copsOnFoot.indexOf(c); if(i>=0) G.copsOnFoot.splice(i,1);
+  G.money+=50; addWanted(2); // killing an officer = +2 stars
 }
 function raySphere(o,d,c,r){
   const ox=o.x-c.x, oy=o.y-(c.y+1.2), oz=o.z-c.z;
@@ -1415,6 +1474,8 @@ function meleePunch(){
   const o=G.player.mesh.position; const ry=G.player.rotY;
   const fx=o.x-Math.sin(ry)*1.2, fz=o.z-Math.cos(ry)*1.2;
   G.peds.forEach(pe=>{ if(pe.dead)return; if(Math.hypot(pe.mesh.position.x-fx,pe.mesh.position.z-fz)<1.2){ pe.hp-=8; pe.state='flee'; addWanted(0.5); if(pe.hp<=0){killPed(pe);addWanted(0.5);} if(pe.gang) enrageGang(pe); }});
+  // melee bypasses the riot shield (you're inside its guard)
+  G.copsOnFoot.forEach(c=>{ if(Math.hypot(c.mesh.position.x-fx,c.mesh.position.z-fz)<1.3){ c.hp-=12; if(c.hp<=0) killCop(c); }});
 }
 function flamethrow(origin,dir){
   for(let i=0;i<3;i++){ const d=i*4; G.particles.burst(origin.x+dir.x*d,origin.y+dir.y*d,origin.z+dir.z*d,'fire',2); }
@@ -2035,7 +2096,63 @@ function updatePolice(dt){
     }
   });
   updateHelicopter(dt,p);
+  updateCops(dt);
 }
+// On-foot officers: flank → close in → arrest or kill. Riot shields block frontal bullets.
+function updateCops(dt){
+  if(!G.copsOnFoot.length) return;
+  const onFoot=!G.player.inVehicle;
+  const pp=G.player.mesh.position;
+  const px=G.player.inVehicle?G.player.inVehicle.position.x:pp.x;
+  const pz=G.player.inVehicle?G.player.inVehicle.position.z:pp.z;
+  for(let i=G.copsOnFoot.length-1;i>=0;i--){
+    const c=G.copsOnFoot[i];
+    if(c.hp<=0){ G.scene.remove(c.mesh); G.copsOnFoot.splice(i,1); continue; }
+    c.phase+=dt;
+    const dx=px-c.mesh.position.x, dz=pz-c.mesh.position.z; const dist=Math.hypot(dx,dz);
+    // despawn if far and out of action
+    if(dist>180){ G.scene.remove(c.mesh); G.copsOnFoot.splice(i,1); continue; }
+    // tighten the noose over time so they genuinely close in
+    c.standoff=Math.max(2.2, c.standoff-dt*1.2);
+    // flank target: a point offset around the player by this cop's assigned angle
+    c.flankAngle += dt*0.6; // orbit a little so they keep flanking, not stacking
+    let tx=px+Math.cos(c.flankAngle)*c.standoff;
+    let tz=pz+Math.sin(c.flankAngle)*c.standoff;
+    // if already at standoff ring, push straight in toward the player to arrest/engage
+    const ringDist=Math.hypot(tx-c.mesh.position.x,tz-c.mesh.position.z);
+    if(ringDist<2.5){ tx=px; tz=pz; }
+    const ang=Math.atan2(tz-c.mesh.position.z,tx-c.mesh.position.x);
+    const spd=(c.swat?3.2:3.6)*(dist>4?1:0.2);
+    const nx=c.mesh.position.x+Math.cos(ang)*spd*dt;
+    const nz=c.mesh.position.z+Math.sin(ang)*spd*dt;
+    const col=collideCircle(nx,nz,0.4); c.mesh.position.x=col.x; c.mesh.position.z=col.z;
+    // face the player (shield forward)
+    const faceAng=Math.atan2(px-c.mesh.position.x,pz-c.mesh.position.z);
+    c.mesh.rotation.y=lerp2angle(c.mesh.rotation.y,faceAng,0.2);
+    animateHumanoid(c.mesh,c.phase,dist>4,false);
+    c.mesh.userData.facing=faceAng;
+
+    // Decide: arrest (low threat) vs kill (high threat / player armed & shooting)
+    const lethal = G.wanted>=3 || (G.player.weapon!=='fists' && G.mouse.down) || G.player.inVehicle;
+    const los = hasLOS(c.mesh.position,{x:px,z:pz});
+    if(lethal){
+      // shoot to kill
+      c.shootCD-=dt;
+      if(dist<45 && c.shootCD<=0 && los){
+        c.shootCD = c.swat?0.7:1.1;
+        if(Math.random() < (c.swat?0.55:0.4)) damagePlayer(c.swat?rand(7,14):rand(4,9));
+        G.audio.gunshot(c.swat?'smg':'pistol');
+        const fx=c.mesh.position.x+Math.sin(faceAng)*0.6, fz=c.mesh.position.z+Math.cos(faceAng)*0.6;
+        G.particles.burst(fx,1.4,fz,'muzzle',3);
+      }
+    } else {
+      // try to arrest: get adjacent on foot for 3 continuous seconds
+      if(onFoot && dist<1.6){ c.arrestTimer+=dt; if(c.arrestTimer>3){ arrestPlayer(); return; } }
+      else c.arrestTimer=0;
+    }
+  }
+}
+function lerp2angle(a,b,t){ let d=b-a; while(d>Math.PI)d-=TAU; while(d<-Math.PI)d+=TAU; return a+d*t; }
 // line of sight: no building between two points (cheap segment-vs-AABB test)
 function hasLOS(a,b){
   const dx=b.x-a.x, dz=b.z-a.z; const len=Math.hypot(dx,dz)||1; const steps=Math.min(20,Math.ceil(len/6));
@@ -2279,6 +2396,7 @@ function updateWanted(dt){
   const p=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
   let seen=false;
   G.police.forEach(v=>{ if(!v.userData.burned && Math.hypot(v.position.x-p.x,v.position.z-p.z)<80) seen=true; });
+  G.copsOnFoot.forEach(c=>{ if(Math.hypot(c.mesh.position.x-p.x,c.mesh.position.z-p.z)<60) seen=true; });
   if(seen){ G.lastSeenTimer=0; } else { G.lastSeenTimer+=dt; if(G.lastSeenTimer>12){ G.wanted=Math.max(0,G.wanted-0.05*dt); }}
   ensurePolice();
   if(G.wanted===0) clearWanted();
@@ -2413,57 +2531,54 @@ function initThree(){
 }
 
 // Loading orchestration
+// No loading screen: boot straight into the city. The world streams in over
+// a few frames in the background while you can already move around.
+let worldReady=false;
 function startLoading(){
   initThree();
   G.audio=new AudioEngine();
+  G.CITY=GRID*CELL;
+  createPlayer();          // exist immediately so the camera has a subject
+  G.started=true;          // gameplay loop runs right away
   const gen=generateWorld();
-  const bar=document.getElementById('bar'), msg=document.getElementById('loadMsg');
-  let step=0; const totalSteps=18; let finished=false;
+  let finished=false;
 
-  function finish(note){
+  function finish(){
     if(finished) return; finished=true;
     try{
-      if(!G.player) createPlayer();
       spawnTraffic(); spawnPeds(); spawnInitialPickups(); placeMissionMarkers();
       drawPortrait();
-    }catch(e){ console.error('entity spawn error',e); msg.textContent='WARN: '+e.message; }
-    bar.style.width='100%';
-    msg.textContent = note || 'READY';
-    document.getElementById('startBtn').style.display='block';
+    }catch(e){ console.error('entity spawn error',e); }
+    worldReady=true;
   }
-
-  // Watchdog: if generation stalls or throws past this budget, force-finish so
-  // the game can never get stuck on the loading screen.
-  const watchdog=setTimeout(()=>{ console.warn('load watchdog fired'); finish('READY (recovered)'); }, 25000);
-
+  // Watchdog so a failed gen step can never stall the stream.
+  const watchdog=setTimeout(()=>{ console.warn('world-gen watchdog'); finish(); }, 25000);
   function tick(){
     if(finished) return;
     let r;
-    try{
-      r=gen.next();
-    }catch(e){
-      // a single generation step failed — log it, but DON'T hang: finish anyway
-      console.error('world-gen step failed:',e);
-      clearTimeout(watchdog); finish('READY'); return;
-    }
-    if(!r.done){
-      step++; bar.style.width=Math.min(95,step/totalSteps*100)+'%'; msg.textContent=r.value||'';
-      setTimeout(tick,8); // render a frame between steps so screen isn't frozen
-    } else {
-      clearTimeout(watchdog); finish('READY');
-    }
+    try{ r=gen.next(); }
+    catch(e){ console.error('world-gen step failed:',e); clearTimeout(watchdog); finish(); return; }
+    if(!r.done){ setTimeout(tick,6); }
+    else { clearTimeout(watchdog); finish(); }
   }
   tick();
 }
 
-document.getElementById('startBtn').addEventListener('click',()=>{
-  document.getElementById('loader').style.display='none';
-  G.started=true; G.audio.init();
+// Audio + pointer-lock need a user gesture; arm them once on the first input.
+let firstInputDone=false;
+function firstInput(){
+  if(firstInputDone) return; firstInputDone=true;
+  try{ G.audio.init(); }catch(e){}
   if(!isTouch && gameDiv.requestPointerLock) gameDiv.requestPointerLock();
-});
+}
+['pointerdown','keydown','touchstart'].forEach(ev=>window.addEventListener(ev,firstInput,{once:false}));
 
 // boot
-window.addEventListener('load',()=>{ try{ startLoading(); setupTouchUI(); requestAnimationFrame(loop);}catch(e){ document.getElementById('loadMsg').textContent='ERROR: '+e.message; console.error(e);} });
+window.addEventListener('load',()=>{
+  const ld=document.getElementById('loader'); if(ld) ld.remove();   // remove loading screen entirely
+  try{ startLoading(); setupTouchUI(); requestAnimationFrame(loop); }
+  catch(e){ console.error(e); alert('Game failed to start: '+e.message); }
+});
 </script>
 </body>
 </html>
