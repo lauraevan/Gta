@@ -100,28 +100,39 @@
   .panel .item:hover { background:#ff8c1a; color:#000; }
   .panel .hint { margin-top:20px; color:#999; }
 
-  /* ---------- Touch controls ---------- */
+  /* ---------- Touch controls (responsive, non-overlapping) ---------- */
   #touch { position:fixed; inset:0; z-index:90; pointer-events:none; display:none; touch-action:none; }
-  .tbtn { position:absolute; pointer-events:auto; background:rgba(255,255,255,0.14); border:2px solid rgba(255,255,255,0.45);
-    border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-size:13px; font-weight:900;
-    user-select:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent; text-align:center; line-height:1.1; }
-  .tbtn:active, .tbtn.held { background:rgba(255,255,255,0.4); }
-  #joyMove { left:24px; bottom:30px; width:128px; height:128px; }
-  #joyMoveK { position:absolute; width:52px; height:52px; border-radius:50%; background:rgba(255,255,255,0.45); left:38px; top:38px; }
-  #joyCam { right:24px; bottom:200px; width:104px; height:104px; }
-  #joyCamK { position:absolute; width:44px; height:44px; border-radius:50%; background:rgba(255,255,255,0.45); left:30px; top:30px; }
-  #btnFire { right:36px; bottom:44px; width:86px; height:86px; background:rgba(255,60,60,0.3); font-size:16px; }
-  #btnJump { right:140px; bottom:54px; width:62px; height:62px; }
-  #btnEnter{ right:130px; bottom:128px; width:64px; height:64px; background:rgba(80,160,255,0.3); }
-  #btnSprint{ left:170px; bottom:36px; width:60px; height:60px; }
-  #btnWeapon{ right:44px; bottom:144px; width:60px; height:60px; background:rgba(255,180,40,0.28); }
-  #btnReload{ right:200px; bottom:120px; width:56px; height:56px; }
-  #btnCam{ left:170px; bottom:108px; width:54px; height:54px; font-size:11px; }
-  #btnAction{ right:200px; bottom:48px; width:56px; height:56px; background:rgba(120,255,120,0.28); }
-  /* button to toggle touch UI on/off (top-left, always available) */
-  #touchToggle { position:fixed; top:14px; left:230px; z-index:120; pointer-events:auto; display:none;
-    background:rgba(0,0,0,0.5); color:#fff; border:1px solid #888; border-radius:6px; padding:6px 10px;
-    font-size:12px; font-weight:900; }
+  .tbtn { position:absolute; pointer-events:auto; background:rgba(20,24,30,0.4); border:2px solid rgba(255,255,255,0.5);
+    border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff;
+    font-size:clamp(11px,2.4vmin,17px); font-weight:900; box-shadow:0 2px 8px rgba(0,0,0,0.4);
+    user-select:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent; text-align:center; line-height:1.05; }
+  .tbtn:active, .tbtn.held { background:rgba(255,255,255,0.5); color:#000; }
+  /* left thumb — movement */
+  #joyMove { left:3vmin; bottom:4vmin; width:clamp(96px,26vmin,190px); height:clamp(96px,26vmin,190px); background:rgba(20,24,30,0.28); }
+  #joyMoveK { position:absolute; width:40%; height:40%; border-radius:50%; background:rgba(255,255,255,0.5); left:30%; top:30%; }
+  #joyCam { display:none; } /* replaced by swipe-to-look on the right side */
+  /* right thumb — primary fire + nearby actions, arranged in a clear fan */
+  #btnFire  { right:3vmin;  bottom:4vmin;  width:clamp(78px,18vmin,128px); height:clamp(78px,18vmin,128px);
+              background:rgba(220,50,50,0.45); border-color:#ff8a8a; font-size:clamp(13px,2.8vmin,20px); }
+  #btnEnter { right:calc(3vmin + clamp(78px,18vmin,128px) + 2.5vmin); bottom:5vmin;
+              width:clamp(58px,13vmin,92px); height:clamp(58px,13vmin,92px); background:rgba(80,150,255,0.42); border-color:#9cc6ff; }
+  #btnJump  { right:5vmin;   bottom:calc(4vmin + clamp(78px,18vmin,128px) + 2.5vmin);
+              width:clamp(58px,13vmin,92px); height:clamp(58px,13vmin,92px); }
+  #btnWeapon{ right:calc(4vmin + clamp(78px,18vmin,128px)); bottom:calc(5vmin + clamp(78px,18vmin,128px) + 1vmin);
+              width:clamp(52px,12vmin,84px); height:clamp(52px,12vmin,84px); background:rgba(255,170,40,0.42); border-color:#ffd089; }
+  /* far-right edge column — secondary actions, stacked top-down */
+  #btnReload{ right:3vmin; top:30vh;  width:clamp(50px,11vmin,76px); height:clamp(50px,11vmin,76px); }
+  #btnCam   { right:3vmin; top:calc(30vh + clamp(50px,11vmin,76px) + 1.5vmin); width:clamp(50px,11vmin,76px); height:clamp(50px,11vmin,76px); font-size:clamp(10px,2vmin,14px); }
+  /* left edge — sprint + use, above the move stick */
+  #btnSprint{ left:3vmin; bottom:calc(4vmin + clamp(96px,26vmin,190px) + 2vmin); width:clamp(52px,12vmin,84px); height:clamp(52px,12vmin,84px); }
+  #btnAction{ left:calc(3vmin + clamp(52px,12vmin,84px) + 2vmin); bottom:calc(4vmin + clamp(96px,26vmin,190px) + 2vmin);
+              width:clamp(52px,12vmin,84px); height:clamp(52px,12vmin,84px); background:rgba(120,220,120,0.42); border-color:#aef0ae; }
+  /* button to toggle touch UI on/off */
+  #touchToggle { position:fixed; top:8px; left:50%; transform:translateX(-50%); z-index:120; pointer-events:auto; display:none;
+    background:rgba(0,0,0,0.5); color:#fff; border:1px solid #888; border-radius:6px; padding:5px 10px;
+    font-size:11px; font-weight:900; }
+  #rotateHint { position:fixed; inset:0; z-index:130; display:none; align-items:center; justify-content:center;
+    background:rgba(0,0,0,0.85); color:#fff; font-size:20px; text-align:center; padding:30px; }
 </style>
 </head>
 <body>
@@ -448,35 +459,85 @@ class ParticleSystem{
 function makeHumanoid(colors){
   const root=new THREE.Group();
   const skin=colors.skin, jacket=colors.jacket, pants=colors.pants;
-  const matJ=new THREE.MeshStandardMaterial({color:jacket,roughness:0.8});
-  const matS=new THREE.MeshStandardMaterial({color:skin,roughness:0.7});
-  const matP=new THREE.MeshStandardMaterial({color:pants,roughness:0.8});
-  const torso=new THREE.Mesh(new THREE.BoxGeometry(0.6,1.0,0.3),matJ); torso.position.y=1.4; torso.castShadow=true; root.add(torso);
-  const head=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.4,0.4),matS); head.position.y=2.1; head.castShadow=true; root.add(head);
-  // arms with shoulder pivots
+  const hair=colors.hair!==undefined?colors.hair:0x2b2018;
+  const matJ=new THREE.MeshStandardMaterial({color:jacket,roughness:0.85});
+  const matS=new THREE.MeshStandardMaterial({color:skin,roughness:0.65});
+  const matP=new THREE.MeshStandardMaterial({color:pants,roughness:0.85});
+  const matSh=new THREE.MeshStandardMaterial({color:0x1a1a1d,roughness:0.6});
+  const matH=new THREE.MeshStandardMaterial({color:hair,roughness:0.9});
+  // pelvis + tapered torso (chest wider than waist)
+  const pelvis=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.35,0.3),matP); pelvis.position.y=1.02; pelvis.castShadow=true; root.add(pelvis);
+  const torso=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.85,0.32),matJ); torso.position.y=1.6; torso.castShadow=true; root.add(torso);
+  const chest=new THREE.Mesh(new THREE.BoxGeometry(0.66,0.3,0.34),matJ); chest.position.y=1.92; chest.castShadow=true; root.add(chest);
+  const neck=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.12,0.16,8),matS); neck.position.y=2.12; root.add(neck);
+  const head=new THREE.Mesh(new THREE.BoxGeometry(0.36,0.4,0.36),matS); head.position.y=2.36; head.castShadow=true; root.add(head);
+  const hairM=new THREE.Mesh(new THREE.BoxGeometry(0.38,0.16,0.38),matH); hairM.position.set(0,2.5,0); root.add(hairM);
+  // face points -Z (the character's forward / aim direction)
+  const nose=new THREE.Mesh(new THREE.BoxGeometry(0.07,0.08,0.08),matS); nose.position.set(0,2.34,-0.19); root.add(nose);
+  // arms: shoulder pivot → upper arm + forearm + hand
   function arm(side){
-    const pivot=new THREE.Group(); pivot.position.set(side*0.39,1.85,0);
-    const m=new THREE.Mesh(new THREE.BoxGeometry(0.18,0.7,0.18),matJ); m.position.y=-0.35; m.castShadow=true; pivot.add(m); root.add(pivot); return pivot;
+    const pivot=new THREE.Group(); pivot.position.set(side*0.4,2.0,0);
+    const up=new THREE.Mesh(new THREE.BoxGeometry(0.17,0.42,0.17),matJ); up.position.y=-0.21; up.castShadow=true; pivot.add(up);
+    const fore=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.42,0.15),matS); fore.position.y=-0.63; fore.castShadow=true; pivot.add(fore);
+    const hand=new THREE.Group(); hand.position.set(0,-0.86,0); pivot.add(hand);
+    const palm=new THREE.Mesh(new THREE.BoxGeometry(0.13,0.16,0.14),matS); hand.add(palm);
+    pivot.userData.hand=hand; root.add(pivot); return pivot;
   }
   function leg(side){
-    const pivot=new THREE.Group(); pivot.position.set(side*0.16,0.9,0);
-    const m=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.8,0.22),matP); m.position.y=-0.4; m.castShadow=true; pivot.add(m); root.add(pivot); return pivot;
+    const pivot=new THREE.Group(); pivot.position.set(side*0.16,1.0,0);
+    const thigh=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.5,0.23),matP); thigh.position.y=-0.25; thigh.castShadow=true; pivot.add(thigh);
+    const shin=new THREE.Mesh(new THREE.BoxGeometry(0.18,0.5,0.2),matP); shin.position.y=-0.72; shin.castShadow=true; pivot.add(shin);
+    const shoe=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.14,0.34),matSh); shoe.position.set(0,-1.0,0.06); shoe.castShadow=true; pivot.add(shoe);
+    root.add(pivot); return pivot;
   }
-  root.userData.lArm=arm(-1); root.userData.rArm=arm(1);
+  const la=arm(-1), ra=arm(1);
+  root.userData.lArm=la; root.userData.rArm=ra;
+  root.userData.lHand=la.userData.hand; root.userData.rHand=ra.userData.hand;
   root.userData.lLeg=leg(-1); root.userData.rLeg=leg(1);
-  root.userData.torso=torso; root.userData.head=head;
+  root.userData.torso=torso; root.userData.head=head; root.userData.headBaseY=2.36;
   return root;
 }
 function animateHumanoid(h,t,moving,running){
-  const ud=h.userData; const sp=running?1.4:1; const amp=running?0.7:0.45;
+  const ud=h.userData; const sp=running?1.5:1; const amp=running?0.75:0.45;
+  if(ud.armLock){ // holding/aiming a weapon — arms stay forward, legs still walk
+    const s=moving?Math.sin(t*8*sp):0;
+    ud.lLeg.rotation.x=-s*amp; ud.rLeg.rotation.x=s*amp; return;
+  }
   if(moving){ const s=Math.sin(t*8*sp);
     ud.lArm.rotation.x=s*amp; ud.rArm.rotation.x=-s*amp;
     ud.lLeg.rotation.x=-s*amp; ud.rLeg.rotation.x=s*amp;
-    ud.head.position.y=2.1+(running?Math.abs(Math.sin(t*16))*0.05:0);
+    if(ud.head) ud.head.position.y=ud.headBaseY+(running?Math.abs(Math.sin(t*16))*0.05:0);
   } else {
     ud.lArm.rotation.x*=0.85; ud.rArm.rotation.x*=0.85; ud.lLeg.rotation.x*=0.85; ud.rLeg.rotation.x*=0.85;
-    ud.torso.position.y=1.4+Math.sin(t*2)*0.02;
+    if(ud.torso) ud.torso.position.y=1.6+Math.sin(t*2)*0.02;
   }
+}
+// Pose both arms forward to hold/aim a weapon
+function poseHold(h){
+  const ud=h.userData; ud.armLock=true;
+  ud.rArm.rotation.x=-1.35; ud.rArm.rotation.z=0.12;
+  ud.lArm.rotation.x=-1.2;  ud.lArm.rotation.z=-0.25;
+}
+function poseRelax(h){ if(h.userData) h.userData.armLock=false; }
+
+/* ---------- Procedural weapon meshes (held in hand) ---------- */
+function makeWeaponMesh(name){
+  const g=new THREE.Group();
+  const metal=new THREE.MeshStandardMaterial({color:0x2b2b30,roughness:0.5,metalness:0.7});
+  const dark=new THREE.MeshStandardMaterial({color:0x14140f,roughness:0.7});
+  const wood=new THREE.MeshStandardMaterial({color:0x6b4423,roughness:0.8});
+  function box(w,h,d,mat,x,y,z){ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat||metal); m.position.set(x||0,y||0,z||0); g.add(m); return m; }
+  function cyl(r,len,mat,x,y,z){ const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,8),mat||metal); m.rotation.x=Math.PI/2; m.position.set(x||0,y||0,z||0); g.add(m); return m; }
+  if(name==='pistol'){ box(0.07,0.16,0.05,dark,0,-0.05,-0.02); box(0.06,0.08,0.22,metal,0,0.04,0.06); }
+  else if(name==='smg'){ box(0.07,0.14,0.06,dark,0,-0.05,0); box(0.06,0.08,0.34,metal,0,0.03,0.08); box(0.05,0.16,0.05,dark,0,-0.12,0.02); }
+  else if(name==='shotgun'){ box(0.06,0.1,0.5,metal,0,0.02,0.14); box(0.05,0.06,0.3,wood,0,-0.01,-0.12); }
+  else if(name==='rifle'){ box(0.06,0.1,0.5,metal,0,0.02,0.12); box(0.05,0.18,0.06,dark,0,-0.11,0.04); box(0.05,0.06,0.2,wood,0,-0.01,-0.16); cyl(0.02,0.2,metal,0,0.04,0.36); }
+  else if(name==='sniper'){ box(0.06,0.09,0.62,metal,0,0.02,0.18); cyl(0.04,0.16,dark,0,0.1,0.1); box(0.05,0.06,0.22,wood,0,-0.02,-0.2); }
+  else if(name==='rpg'){ cyl(0.09,0.7,dark,0,0.02,0.1); cyl(0.13,0.16,metal,0,0.02,-0.22); }
+  else if(name==='flamethrower'){ cyl(0.08,0.4,dark,0,0,0.05); cyl(0.05,0.2,metal,0,0.02,0.28); box(0.12,0.22,0.12,metal,0,-0.05,-0.18); }
+  else { return null; } // fists / throwables: nothing held
+  g.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
+  return g;
 }
 function flailHumanoid(h,t){
   const ud=h.userData; const s=Math.sin(t*14);
@@ -621,6 +682,9 @@ function* generateWorld(){
 
   yield 'Placing landmarks…';
   setupLocations(offset);
+
+  yield 'Stocking the stores…';
+  setupStores(offset);
 
   yield 'Done';
 }
@@ -933,6 +997,103 @@ function setupLocations(offset){
   G.shops.forEach(s=>locMark(s.x,s.z, s.type==='ammu'?0xffaa00:(s.type==='food'?0x88ff44:0xff4488)));
 }
 
+// =================== ENTERABLE / ROBBABLE STORES ===================
+function setupStores(offset){
+  G.stores=[]; G.inStore=null;
+  const doors=[
+    {x:offset+4*CELL+28, z:offset+2*CELL,    name:'24/7 STORE'},
+    {x:offset+7*CELL,    z:offset+5*CELL+28, name:'LIQUOR STORE'},
+    {x:offset+2*CELL,    z:offset+8*CELL+28, name:'MINI-MART'},
+    {x:offset+9*CELL,    z:offset+7*CELL+28, name:'PAY-LESS'},
+  ];
+  doors.forEach((d,i)=>{
+    const interior=buildStoreInterior(i,d.name);
+    G.stores.push({door:d,interior,name:d.name});
+    G.markers.push({x:d.x,z:d.z,type:'store'});
+    // glowing storefront door + neon sign so it's findable
+    const door=new THREE.Mesh(new THREE.BoxGeometry(2.4,3,0.3),new THREE.MeshStandardMaterial({color:0x224455,emissive:0x33aaff,emissiveIntensity:0.5}));
+    door.position.set(d.x,1.5,d.z); G.scene.add(door);
+    const sign=new THREE.Mesh(new THREE.BoxGeometry(3.4,0.9,0.2),new THREE.MeshStandardMaterial({color:0x111111,emissive:0x33ff99,emissiveIntensity:0.6}));
+    sign.position.set(d.x,3.5,d.z); G.scene.add(sign);
+  });
+}
+function buildStoreInterior(i,name){
+  const ox=6000+i*80, oz=0; // isolated slot far from the city
+  const grp=new THREE.Group(); G.scene.add(grp);
+  const floor=new THREE.Mesh(new THREE.BoxGeometry(16,0.2,12),new THREE.MeshStandardMaterial({color:0x9a9286,roughness:0.9}));
+  floor.position.set(ox,0,oz); grp.add(floor);
+  const ceil=new THREE.Mesh(new THREE.BoxGeometry(16,0.2,12),new THREE.MeshStandardMaterial({color:0xe8e8e8}));
+  ceil.position.set(ox,4,oz); grp.add(ceil);
+  const wm=new THREE.MeshStandardMaterial({color:0xcdc7b6,roughness:0.95});
+  function wall(w,d,x,z){ const m=new THREE.Mesh(new THREE.BoxGeometry(w,4,d),wm); m.position.set(ox+x,2,oz+z); grp.add(m);
+    G.buildingAABBs.push({minX:ox+x-w/2,maxX:ox+x+w/2,minZ:oz+z-d/2,maxZ:oz+z+d/2,minY:0,maxY:4,mesh:m}); }
+  wall(16,0.3,0,-6); wall(0.3,12,-8,0); wall(0.3,12,8,0);   // back + sides
+  wall(6,0.3,-5,6); wall(6,0.3,5,6);                         // front with central doorway gap
+  const lt=new THREE.PointLight(0xfff0d0,1.1,40); lt.position.set(ox,3.6,oz); grp.add(lt);
+  // shelves (aisles) with colourful goods
+  const shelfMat=new THREE.MeshStandardMaterial({color:0x8a8f96,metalness:0.3,roughness:0.6});
+  const goodCols=[0xc0392b,0x2980b9,0xf1c40f,0x27ae60,0xe67e22,0xecf0f1,0x8e44ad];
+  for(let a=0;a<3;a++){ const sx=ox-4+a*4;
+    const shelf=new THREE.Mesh(new THREE.BoxGeometry(1.2,2,7),shelfMat); shelf.position.set(sx,1,oz-1); grp.add(shelf);
+    G.buildingAABBs.push({minX:sx-0.6,maxX:sx+0.6,minZ:oz-1-3.5,maxZ:oz-1+3.5,minY:0,maxY:2,mesh:shelf});
+    for(let k=0;k<10;k++){ const gd=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.3,0.3),new THREE.MeshStandardMaterial({color:choice(goodCols)}));
+      gd.position.set(sx+rand(-0.4,0.4),rand(0.6,1.8),oz-1+rand(-3,3)); grp.add(gd); }
+  }
+  // counter + register near the front-left
+  const counter=new THREE.Mesh(new THREE.BoxGeometry(4,1.1,1.2),new THREE.MeshStandardMaterial({color:0x6b4a2a,roughness:0.7}));
+  counter.position.set(ox-4.5,0.55,oz+3.5); grp.add(counter);
+  G.buildingAABBs.push({minX:ox-4.5-2,maxX:ox-4.5+2,minZ:oz+3.5-0.6,maxZ:oz+3.5+0.6,minY:0,maxY:1.1,mesh:counter});
+  const reg=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.4,0.5),new THREE.MeshStandardMaterial({color:0x222222,emissive:0x113311,emissiveIntensity:0.3}));
+  reg.position.set(ox-4.5,1.3,oz+3.5); grp.add(reg);
+  // clerk behind counter
+  const clerk=makeHumanoid({skin:0xC68642,jacket:0x8e2b2b,pants:0x222222});
+  clerk.position.set(ox-4.5,0,oz+4.6); clerk.rotation.y=Math.PI; grp.add(clerk);
+  // shoppers
+  const shoppers=[];
+  for(let s=0;s<3;s++){ const m=makeHumanoid(choice(OUTFITS)); m.position.set(ox+rand(-5,5),0,oz+rand(-3,3)); grp.add(m);
+    shoppers.push({mesh:m,wp:{x:ox+rand(-5,5),z:oz+rand(-3,3)},pause:0,phase:Math.random()*9,flee:false}); }
+  return {ox,oz,group:grp,clerk,clerkPhase:0,shoppers,reg,robbed:false,robbing:0,exitZ:oz+5.5,name};
+}
+function enterStore(s){
+  G.inStore=s; s.returnPos={x:G.player.mesh.position.x,z:G.player.mesh.position.z};
+  G.player.mesh.position.set(s.interior.ox, 0, s.interior.oz+4.5);
+  G.player.vx=G.player.vz=0; G.player.rotY=Math.PI;
+  G.camOrbit.theta=Math.PI; G.camOrbit.phi=0.3;
+  toast('Entered '+s.name+(s.interior.robbed?'':' — aim a gun at the clerk to rob it'));
+}
+function exitStore(){
+  const s=G.inStore; if(!s) return;
+  G.player.mesh.position.set(s.returnPos.x,0,s.returnPos.z+2.5);
+  G.inStore=null; showObjective('');
+}
+function updateStore(dt){
+  const s=G.inStore; if(!s) return; const I=s.interior; const p=G.player.mesh.position;
+  I.clerkPhase+=dt; animateHumanoid(I.clerk,I.clerkPhase,false,false);
+  // shoppers wander (or flee during a robbery)
+  I.shoppers.forEach(sh=>{ sh.phase+=dt;
+    let tx,tz,moving=true;
+    if(sh.flee){ tx=I.ox; tz=I.exitZ+2; }
+    else if(sh.pause>0){ sh.pause-=dt; moving=false; }
+    else { tx=sh.wp.x; tz=sh.wp.z; if(Math.hypot(tx-sh.mesh.position.x,tz-sh.mesh.position.z)<0.6){ sh.pause=rand(1,3); sh.wp={x:I.ox+rand(-5,5),z:I.oz+rand(-3,3)}; moving=false; } }
+    if(moving){ const a=Math.atan2(tz-sh.mesh.position.z,tx-sh.mesh.position.x);
+      sh.mesh.position.x+=Math.cos(a)*(sh.flee?4:1.4)*dt; sh.mesh.position.z+=Math.sin(a)*(sh.flee?4:1.4)*dt; sh.mesh.rotation.y=-a+Math.PI/2; }
+    animateHumanoid(sh.mesh,sh.phase,moving,sh.flee);
+  });
+  // robbery: aim a gun at the clerk and fire near the counter
+  const dClerk=Math.hypot(p.x-I.clerk.position.x,p.z-I.clerk.position.z);
+  if(!I.robbed){
+    if(dClerk<6 && G.player.weapon!=='fists' && WEAPONS[G.player.weapon] && !WEAPONS[G.player.weapon].throw && G.mouse.down){
+      I.robbing+=dt; poseHold(I.clerk); I.clerk.userData.rArm.rotation.x=2.6; I.clerk.userData.lArm.rotation.x=2.6; // hands up
+      I.shoppers.forEach(sh=>sh.flee=true);
+      showObjective('ROBBING '+I.name+'… hold ('+Math.max(0,Math.ceil(3-I.robbing))+')');
+      if(I.robbing>=3){ const loot=randi(600,2200); G.money+=loot; I.robbed=true; addWanted(2); G.audio.cash();
+        bigMsg('ROBBED '+I.name+' +$'+loot,'#33ff33'); showObjective('Get out!'); I.reg.material.emissive.setHex(0x331111); }
+    } else { I.robbing=Math.max(0,I.robbing-dt*2); if(dClerk<6) showObjective('Aim a gun at the clerk & hold FIRE to rob'); else showObjective('Press E to leave'); }
+  } else {
+    showObjective('Press E to leave');
+  }
+}
+
 // =================== VEHICLES ===================
 const VEHTYPES={
   sedan:{name:'Greenwood',L:4.2,W:1.7,H:1.4,maxSpeed:28,colors:[0xffffff,0x111111,0xc0c0c0,0xc0392b,0x2980b9],wheels:4},
@@ -1015,19 +1176,35 @@ function makeVehicle(type,x,z,opts){
 
 function spawnTraffic(){
   const half=G.CITY/2, offset=-half+CELL/2;
-  const types=['sedan','sports','suv','pickup','taxi','bus','moto'];
-  // parked + traffic
-  for(let i=0;i<(LOW?22:40);i++){
-    const type=choice(types);
-    // place near a road
+  const nTraffic=LOW?26:55, nParked=LOW?12:26;
+  for(let i=0;i<nTraffic;i++) spawnTrafficCar();
+  // parked cars along the curbs
+  const ptypes=['sedan','sports','suv','pickup','taxi'];
+  for(let i=0;i<nParked;i++){
+    const type=choice(ptypes);
     const i2=randi(0,GRID-1), j2=randi(0,GRID-1);
     const x=offset+i2*CELL + (Math.random()<0.5? -CELL/2-5 : CELL/2+5);
     const z=offset+j2*CELL + rand(-20,20);
-    const v=makeVehicle(type,x,z,{stationary:Math.random()<0.5});
-    v.rotation.y=Math.random()<0.5?0:Math.PI;
-    if(!v.userData.stationary){ v.userData.aiState='traffic'; v.userData.speed=rand(6,12); }
-    G.vehicles.push(v);
+    const v=makeVehicle(type,x,z,{stationary:true});
+    v.rotation.y=Math.random()<0.5?0:Math.PI; G.vehicles.push(v);
   }
+}
+// One lane-following traffic car on a random road, headed along an axis.
+function spawnTrafficCar(){
+  const half=G.CITY/2;
+  const types=['sedan','sedan','suv','pickup','taxi','sports','bus'];
+  const type=choice(types);
+  const vertical=Math.random()<0.5;
+  const k=randi(1,GRID-1); const line=-half+k*CELL;          // road centerline
+  const along=rand(-half+CELL,half-CELL);
+  const tsign=Math.random()<0.5?1:-1;
+  let x,z,ry,tax,lane;
+  if(vertical){ tax='z'; lane=line-tsign*4; x=lane; z=along; ry= tsign>0?Math.PI:0; }
+  else        { tax='x'; lane=line+tsign*4; z=lane; x=along; ry= tsign>0?-Math.PI/2:Math.PI/2; }
+  const v=makeVehicle(type,x,z,{});
+  v.rotation.y=ry;
+  Object.assign(v.userData,{aiState:'traffic',speed:rand(8,13),tax,tsign,line,lane,turnCD:rand(2,6)});
+  G.vehicles.push(v);
 }
 
 // =================== PLAYER ===================
@@ -1098,7 +1275,7 @@ function randWaypoint(){
   return {x:offset+i*CELL+rand(-25,25), z:offset+j*CELL+rand(-25,25)};
 }
 function spawnPeds(){
-  const n = LOW?40:70;
+  const n = LOW?30:70;
   for(let i=0;i<n;i++){
     const wp=randWaypoint();
     let gang=null;
@@ -1120,6 +1297,11 @@ function collideCircle(x,z,r){
       if(d<0.0001){ nx=b.maxX+r; }
       else { nx=cx+dx/d*r; nz=cz+dz/d*r; }
     }
+  }
+  // inside a store: keep the player within the interior room, skip city bounds
+  if(G.inStore){ const I=G.inStore.interior;
+    nx=clamp(nx,I.ox-7,I.ox+7); nz=clamp(nz,I.oz-5,I.oz+5.4);
+    return {x:nx,z:nz,hit:(nx!==x||nz!==z)};
   }
   // world bounds
   const lim=G.CITY/2+30;
@@ -1742,10 +1924,14 @@ function tryEnterExit(){
   else { const v=nearestVehicle(3); if(v) enterVehicle(v); }
 }
 function tryInteract(){
+  // inside a store → leave
+  if(G.inStore){ exitStore(); return; }
   // mission briefing
   if(G.mission&&G.mission.state==='briefing'){ startMission(G.mission.def); return; }
-  // shop
   const p=G.player.mesh.position;
+  // enter a store
+  if(!G.player.inVehicle && G.stores){ for(const s of G.stores){ if(Math.hypot(s.door.x-p.x,s.door.z-p.z)<4){ enterStore(s); return; } } }
+  // shop
   for(const s of G.shops){ if(Math.hypot(s.x-p.x,s.z-p.z)<4){ openShop(s); return; } }
   // safehouse save
   for(const s of G.safehouses){ if(Math.hypot(s.x-p.x,s.z-p.z)<5){ saveGame(); return; } }
@@ -1812,9 +1998,10 @@ function setupTouchUI(){
   tg.addEventListener('click',()=>enableTouch(!touchOn));
   enableTouch(isTouch);
 
-  // multi-touch joysticks (each tracks its own touch id so both work at once)
+  // left move stick (tracks its own touch id so it works alongside look + buttons)
   setupJoystick('joyMove','joyMoveK',(x,y)=>{touch.move.x=x;touch.move.y=y;touch.move.active=(x*x+y*y)>0.02;});
-  setupJoystick('joyCam','joyCamK',(x,y)=>{ G.camOrbit.theta-=x*0.06; G.camOrbit.phi=clamp(G.camOrbit.phi-y*0.04,0.1,1.4); });
+  // swipe-to-look: any drag on the right ~55% of the screen that isn't on a button
+  setupLookSwipe();
 
   // hold-style buttons
   holdBtn('btnFire', ()=>{ G.mouse.down=true; firePrimary(); }, ()=>{ G.mouse.down=false; });
@@ -1827,6 +2014,31 @@ function setupTouchUI(){
   tapBtn('btnCam',    ()=>cycleCamera());
   tapBtn('btnSprint', ()=>{ touch.sprint=!touch.sprint; keys['shift']=touch.sprint;
     document.getElementById('btnSprint').classList.toggle('held',touch.sprint); });
+}
+// Swipe anywhere that isn't a control to look around (right thumb).
+function setupLookSwipe(){
+  let id=null, lx=0, ly=0;
+  window.addEventListener('touchstart',e=>{
+    if(!touchOn) return;
+    for(const t of e.changedTouches){
+      if(id!==null) break;
+      const el=document.elementFromPoint(t.clientX,t.clientY);
+      if(el && el.closest && el.closest('.tbtn')) continue;        // it's a button/joystick
+      if(t.clientX < window.innerWidth*0.4) continue;               // left zone reserved for move
+      id=t.identifier; lx=t.clientX; ly=t.clientY;
+    }
+  },{passive:true});
+  window.addEventListener('touchmove',e=>{
+    if(id===null) return;
+    for(const t of e.changedTouches){ if(t.identifier!==id) continue;
+      const dx=t.clientX-lx, dy=t.clientY-ly; lx=t.clientX; ly=t.clientY;
+      G.camOrbit.theta -= dx*0.005;
+      G.camOrbit.phi = clamp(G.camOrbit.phi - dy*0.004, 0.1, 1.4);
+    }
+  },{passive:true});
+  const end=e=>{ for(const t of e.changedTouches){ if(t.identifier===id) id=null; } };
+  window.addEventListener('touchend',end,{passive:true});
+  window.addEventListener('touchcancel',end,{passive:true});
 }
 function holdBtn(id,onDown,onUp){
   const el=document.getElementById(id);
@@ -1944,7 +2156,20 @@ function updatePlayer(dt,t){
   pl.mesh.position.set(col.x,ny,col.z);
   pl.mesh.rotation.y=pl.rotY;
   pl.walkPhase+=dt;
+  updateHeldWeapon();
   animateHumanoid(pl.mesh,pl.walkPhase,moving,pl.running);
+}
+// Attach the equipped gun mesh to the player and pose the arms to hold it.
+function updateHeldWeapon(){
+  const pl=G.player; const w=pl.weapon;
+  const wantMesh = WEAPONS[w] && !WEAPONS[w].melee && !WEAPONS[w].throw;
+  if(pl._heldName!==w){
+    if(pl._heldMesh){ pl.mesh.remove(pl._heldMesh); pl._heldMesh=null; }
+    const m=makeWeaponMesh(w);
+    if(m){ m.position.set(0.18,1.55,-0.42); m.rotation.y=Math.PI; pl.mesh.add(m); pl._heldMesh=m; }
+    pl._heldName=w;
+  }
+  if(wantMesh) poseHold(pl.mesh); else poseRelax(pl.mesh);
 }
 
 function updateVehiclePlayer(dt){
@@ -2015,16 +2240,42 @@ function updateVehicles(dt){
     updateVehicleFire(v,dt);
     if(ud.despawnTimer>0){ ud.despawnTimer-=dt; if(ud.despawnTimer<=0 && Math.hypot(v.position.x-px,v.position.z-pz)>40){ removeVehicle(v); return; } }
     if(ud.aiState==='traffic'){
-      // simple forward drive with wrapping
-      const ry=v.rotation.y; const fx=-Math.sin(ry),fz=-Math.cos(ry);
-      // brake if vehicle ahead
-      let brake=false;
-      // move
-      v.position.x+=fx*ud.speed*dt; v.position.z+=fz*ud.speed*dt;
+      const half=G.CITY/2;
+      const along = ud.tax==='z'? v.position.z : v.position.x;
+      let target=ud.maxSpeed*0.5;
+      // --- stop at red lights: look at the intersection ahead ---
+      // grid road lines sit at exact multiples of CELL (since half = 6*CELL)
+      const interAlong = ud.tsign>0 ? Math.ceil((along+0.01)/CELL)*CELL : Math.floor((along-0.01)/CELL)*CELL;
+      const d2int = (interAlong - along)*ud.tsign;
+      if(d2int>1 && d2int<13){
+        // find a light near this intersection
+        const ix = ud.tax==='z'? ud.line : interAlong;
+        const iz = ud.tax==='z'? interAlong : ud.line;
+        for(const tl of G.trafficLights){
+          if(Math.abs(tl.x-ix)<14 && Math.abs(tl.z-iz)<14){
+            const stop = ud.tax==='x' ? (tl.phase<4) : (tl.phase>=4 && tl.phase<8);
+            if(stop) target=0; break;
+          }
+        }
+      }
+      // --- brake for a car ahead in my lane ---
+      for(const o of G.vehicles){ if(o===v||o.userData.burned) continue;
+        if(o.userData.tax!==ud.tax) continue;
+        const oAlong=ud.tax==='z'?o.position.z:o.position.x;
+        const oCross=ud.tax==='z'?o.position.x:o.position.z;
+        if(Math.abs(oCross-ud.lane)<2.5){ const ahead=(oAlong-along)*ud.tsign; if(ahead>0&&ahead<9){ target=0; break; } }
+      }
+      if(G.player.inVehicle){ const pv=G.player.inVehicle.position; const pa=ud.tax==='z'?pv.z:pv.x, pc=ud.tax==='z'?pv.x:pv.z;
+        if(Math.abs(pc-ud.lane)<2.5 && (pa-along)*ud.tsign>0 && (pa-along)*ud.tsign<9) target=0; }
+      ud.speed=lerp(ud.speed,target,0.08);
+      // move along axis, keep locked to lane
+      if(ud.tax==='z'){ v.position.z+=ud.tsign*ud.speed*dt; v.position.x=lerp(v.position.x,ud.lane,0.12); }
+      else { v.position.x+=ud.tsign*ud.speed*dt; v.position.z=lerp(v.position.z,ud.lane,0.12); }
+      v.position.y=ud.wr+0.1;
       ud.wheels.forEach(w=>w.rotation.x+=ud.speed*dt);
-      // turn at grid occasionally / keep in bounds
-      const lim=G.CITY/2;
-      if(Math.abs(v.position.x)>lim||Math.abs(v.position.z)>lim){ v.rotation.y+=Math.PI; }
+      // U-turn at the city edge so cars stay on the grid
+      const a2 = ud.tax==='z'? v.position.z : v.position.x;
+      if(Math.abs(a2)>half-CELL*0.6){ ud.tsign*=-1; ud.lane = ud.tax==='z'? ud.line-ud.tsign*4 : ud.line+ud.tsign*4; v.rotation.y+=Math.PI; }
     }
   });
   updatePolice(dt);
@@ -2369,10 +2620,12 @@ function updatePickups(dt){
 // =================== INTERACTIONS / PROMPTS ===================
 function updatePrompts(){
   if(G.paused||shopOpen) return;
+  if(G.inStore){ showPrompt('Press E to leave the store'); return; }
   const p=G.player.mesh.position; let prompt='';
   if(G.player.inVehicle){ prompt='Press F to exit'; }
   else {
     const v=nearestVehicle(3); if(v) prompt='Press F to enter '+v.userData.name;
+    if(G.stores){ for(const s of G.stores){ if(Math.hypot(s.door.x-p.x,s.door.z-p.z)<4){ prompt='Press E to enter '+s.name; } } }
     for(const s of G.shops){ if(Math.hypot(s.x-p.x,s.z-p.z)<4){ prompt='Press E — '+s.name; } }
     for(const s of G.safehouses){ if(Math.hypot(s.x-p.x,s.z-p.z)<5){ prompt='Press E to save game'; } }
   }
@@ -2452,6 +2705,7 @@ function loop(now){
     const t=now/1000;
     updatePlayer(sdt,t);
     updateCamera(sdt);
+    if(G.inStore) updateStore(sdt);
     updateVehicles(sdt);
     updatePeds(sdt,t);
     updateBullets(sdt);
