@@ -673,6 +673,17 @@ function buildFacades(){
   return FACADES;
 }
 
+// Scale a BoxGeometry's per-face UVs so a SHARED (repeat) texture tiles
+// correctly per building — avoids per-building texture clones (iOS-safe).
+// Box face vertex order in r128: +X,-X,+Y,-Y,+Z,-Z (4 verts each).
+function applyFacadeUV(geo, repX, repY, repD){
+  const uv=geo.attributes.uv; if(!uv) return;
+  const faceScale=[[repD,repY],[repD,repY],[repX,repD],[repX,repD],[repX,repY],[repX,repY]];
+  for(let f=0;f<6;f++){ const sx=faceScale[f][0], sy=faceScale[f][1];
+    for(let v=0;v<4;v++){ const i=f*4+v; uv.setXY(i, uv.getX(i)*sx, uv.getY(i)*sy); }
+  }
+  uv.needsUpdate=true;
+}
 function makeBuilding(x,z,w,d,h,opts){
   opts=opts||{};
   const facs=buildFacades();
@@ -682,15 +693,17 @@ function makeBuilding(x,z,w,d,h,opts){
   else if(h>45)           fac=choice([facs[0],facs[1],facs[2],facs[3]]);
   else                    fac=choice([facs[2],facs[3],facs[4],facs[5]]);
   const repX=Math.max(1,Math.round(w/6)), repD=Math.max(1,Math.round(d/6)), repY=Math.max(1,Math.round(h/5));
-  // clone shares the GPU source but lets each building tile independently
-  const map=fac.map.clone(); map.needsUpdate=true; map.repeat.set(repX,repY);
-  const emap=fac.emap.clone(); emap.needsUpdate=true; emap.repeat.set(repX,repY);
   const isGlass=fac.style.name.indexOf('glass')===0;
+  // IMPORTANT: reuse the SHARED textures (no per-building clone). In three r128
+  // a cloned texture is uploaded to the GPU separately — hundreds of buildings
+  // would mean hundreds of texture uploads, which iOS Safari kills. Instead we
+  // tile by scaling each building's geometry UVs against one shared texture.
   const mat=new THREE.MeshStandardMaterial({
-    map, emissiveMap:emap, emissive:0xffffff, emissiveIntensity:0,
+    map:fac.map, emissiveMap:fac.emap, emissive:0xffffff, emissiveIntensity:0,
     roughness:isGlass?0.25:0.82, metalness:isGlass?0.5:0.05,
   });
   const geo=new THREE.BoxGeometry(w,h,d);
+  applyFacadeUV(geo, repX, repY, repD);
   const m=new THREE.Mesh(geo,mat); m.position.set(x,h/2,z); m.castShadow=true; m.receiveShadow=true;
   G.scene.add(m); G.buildings.push(m);
   m.userData.winMat=mat; m.userData.h=h;
@@ -1779,9 +1792,12 @@ function drawWheel(){
 window.addEventListener('mousemove',e=>{ if(G.wheelOpen){ G.mouse.x=e.clientX-(window.innerWidth/2-200); G.mouse.y=e.clientY-(window.innerHeight/2-200); }});
 
 // =================== TOUCH ===================
-const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints>0 ||
-  /Mobi|Android|iPhone|iPad|iPod|Tablet/i.test(navigator.userAgent);
-const LOW = isTouch; // low-perf profile for mobile
+// iPadOS Safari defaults to a desktop UA, so also detect "Mac with touch".
+const isIOS = /iPad|iPhone|iPod/i.test(navigator.userAgent) ||
+  (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints>0 || isIOS ||
+  /Mobi|Android|iPad|iPod|Tablet/i.test(navigator.userAgent);
+const LOW = isTouch; // low-perf profile for phones & tablets
 const touch={move:{x:0,y:0,active:false},cam:{x:0,y:0},sprint:false};
 let touchOn=false;
 function enableTouch(on){
