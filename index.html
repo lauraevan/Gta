@@ -4110,7 +4110,7 @@ class ParticleSystem{
 }
 
 // =================== HUMANOID MESH (player & peds) ===================
-function makeHumanoid(colors){
+function makeHumanoid(colors,simple){
   const root=new THREE.Group();
   const skin=colors.skin, jacket=colors.jacket, pants=colors.pants;
   const hair=colors.hair!==undefined?colors.hair:0x2b2018;
@@ -4119,6 +4119,23 @@ function makeHumanoid(colors){
   const matP=new THREE.MeshStandardMaterial({color:pants,roughness:0.85});
   const matSh=new THREE.MeshStandardMaterial({color:0x1a1a1d,roughness:0.6});
   const matH=new THREE.MeshStandardMaterial({color:hair,roughness:0.9});
+  // ---- LOW-detail rig (~7 meshes) for ambient NPCs on mobile — big perf win ----
+  if(simple){
+    const cast=!LOW;
+    const torso=new THREE.Mesh(new THREE.BoxGeometry(0.6,1.0,0.3),matJ); torso.position.y=1.45; torso.castShadow=cast; root.add(torso);
+    const head=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.42,0.4),matS); head.position.y=2.16; head.castShadow=cast; root.add(head);
+    const hairM=new THREE.Mesh(new THREE.BoxGeometry(0.42,0.16,0.42),matH); hairM.position.set(0,2.34,0); root.add(hairM);
+    const nose=new THREE.Mesh(new THREE.BoxGeometry(0.07,0.08,0.08),matS); nose.position.set(0,2.13,-0.21); root.add(nose);
+    function armS(side){ const p=new THREE.Group(); p.position.set(side*0.39,1.9,0);
+      const m=new THREE.Mesh(new THREE.BoxGeometry(0.18,0.72,0.18),matJ); m.position.y=-0.36; m.castShadow=cast; p.add(m); p.userData.hand=p; root.add(p); return p; }
+    function legS(side){ const p=new THREE.Group(); p.position.set(side*0.16,0.95,0);
+      const m=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.85,0.22),matP); m.position.y=-0.42; m.castShadow=cast; p.add(m); root.add(p); return p; }
+    const la=armS(-1), ra=armS(1);
+    root.userData.lArm=la; root.userData.rArm=ra; root.userData.lHand=la; root.userData.rHand=ra;
+    root.userData.lLeg=legS(-1); root.userData.rLeg=legS(1);
+    root.userData.torso=torso; root.userData.head=head; root.userData.headBaseY=2.16;
+    return root;
+  }
   // pelvis + tapered torso (chest wider than waist)
   const pelvis=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.35,0.3),matP); pelvis.position.y=1.02; pelvis.castShadow=true; root.add(pelvis);
   const torso=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.85,0.32),matJ); torso.position.y=1.6; torso.castShadow=true; root.add(torso);
@@ -4242,8 +4259,8 @@ function* generateWorld(){
   ground.rotation.x=-Math.PI/2; ground.position.y=-0.05; ground.receiveShadow=true; G.scene.add(ground);
 
   // Roads: one big road plane network. We'll lay road strips along grid lines.
-  const roadMat=new THREE.MeshStandardMaterial({color:PAL.road,roughness:0.35,metalness:0.5});   // wet/reflective asphalt
-  const sideMat=new THREE.MeshStandardMaterial({color:PAL.sidewalk,roughness:0.6,metalness:0.2});
+  const roadMat=new THREE.MeshStandardMaterial({color:PAL.road,roughness:LOW?0.9:0.35,metalness:LOW?0:0.5});   // wet/reflective asphalt (desktop)
+  const sideMat=new THREE.MeshStandardMaterial({color:PAL.sidewalk,roughness:LOW?1:0.6,metalness:LOW?0:0.2});
   const lineMat=new THREE.MeshStandardMaterial({color:0xddcc33,emissive:0x222200});
   const edgeMat=new THREE.MeshStandardMaterial({color:0xcccccc});
 
@@ -4712,11 +4729,11 @@ function buildStoreInterior(i,name){
   const reg=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.4,0.5),new THREE.MeshStandardMaterial({color:0x222222,emissive:0x113311,emissiveIntensity:0.3}));
   reg.position.set(ox-4.5,1.3,oz+3.5); grp.add(reg);
   // clerk behind counter
-  const clerk=makeHumanoid({skin:0xC68642,jacket:0x8e2b2b,pants:0x222222});
+  const clerk=makeHumanoid({skin:0xC68642,jacket:0x8e2b2b,pants:0x222222}, LOW);
   clerk.position.set(ox-4.5,0,oz+4.6); clerk.rotation.y=Math.PI; grp.add(clerk);
   // shoppers
   const shoppers=[];
-  for(let s=0;s<3;s++){ const m=makeHumanoid(choice(OUTFITS)); m.position.set(ox+rand(-5,5),0,oz+rand(-3,3)); grp.add(m);
+  for(let s=0;s<3;s++){ const m=makeHumanoid(choice(OUTFITS), LOW); m.position.set(ox+rand(-5,5),0,oz+rand(-3,3)); grp.add(m);
     shoppers.push({mesh:m,wp:{x:ox+rand(-5,5),z:oz+rand(-3,3)},pause:0,phase:Math.random()*9,flee:false}); }
   return {ox,oz,group:grp,clerk,clerkPhase:0,shoppers,reg,robbed:false,robbing:0,exitZ:oz+5.5,name};
 }
@@ -4868,7 +4885,7 @@ function makeVehicle(type,x,z,opts){
 
 function spawnTraffic(){
   const half=G.CITY/2, offset=-half+CELL/2;
-  const nTraffic=LOW?34:95, nParked=LOW?16:38;
+  const nTraffic=LOW?22:95, nParked=LOW?10:38;
   for(let i=0;i<nTraffic;i++) spawnTrafficCar();
   // parked cars along the curbs
   const ptypes=['sedan','sports','suv','pickup','taxi'];
@@ -5084,7 +5101,7 @@ function spawnInitialPickups(){
 // =================== PEDESTRIANS ===================
 function createPed(x,z,gang){
   const outfit = gang ? {skin:0xC68642,jacket:gang.color,pants:0x222222,hair:0x111111} : choice(OUTFITS);
-  const mesh=makeHumanoid(outfit);
+  const mesh=makeHumanoid(outfit, LOW);
   const scale=rand(0.85,1.05); mesh.scale.set(scale,scale,scale);
   mesh.position.set(x,0,z);
   // armed gang members carry (and show) a pistol
@@ -5099,7 +5116,7 @@ function randWaypoint(){
   return {x:offset+i*CELL+rand(-25,25), z:offset+j*CELL+rand(-25,25)};
 }
 function spawnPeds(){
-  const n = LOW?42:120;
+  const n = LOW?28:120;
   const gangs=G.gangZones||[];
   for(let i=0;i<n;i++){
     const wp=randWaypoint();
@@ -5250,7 +5267,9 @@ function clearWanted(){ G.wanted=0; G.police.forEach(p=>{G.scene.remove(p);}); G
   if(G.heli){ G.scene.remove(G.heli.group); G.heli=null; }
   if(G.jets){ G.jets.forEach(j=>G.scene.remove(j.group)); G.jets.length=0; }
   if(G.mines){ G.mines.forEach(m=>G.scene.remove(m.mesh)); G.mines.length=0; }
-  if(G.spikes){ G.spikes.forEach(s=>G.scene.remove(s.mesh)); G.spikes.length=0; } }
+  if(G.spikes){ G.spikes.forEach(s=>G.scene.remove(s.mesh)); G.spikes.length=0; }
+  if(G.barricades){ G.barricades.forEach(b=>G.scene.remove(b.mesh)); G.barricades.length=0; }
+  if(G.boats){ G.boats.forEach(b=>G.scene.remove(b.group)); G.boats.length=0; } }
 
 function ensurePolice(){
   const want=Math.ceil(G.wanted);
@@ -5283,7 +5302,7 @@ function spawnCop(tier){
   const outfit = (rooftop||specops) ? {skin:0xC68642,jacket:0x23271f,pants:0x14160f,hair:0x1a1a1a}
               : swat ? {skin:0xC68642,jacket:0x1a2230,pants:0x12161e}
                      : {skin:0xC68642,jacket:0x20356b,pants:0x1a2440};
-  const mesh=makeHumanoid(outfit);
+  const mesh=makeHumanoid(outfit, LOW);
   mesh.position.set(x,startY,z); G.scene.add(mesh);
   let shield=null;
   if(swat){
@@ -5315,10 +5334,12 @@ function spawnPoliceCar(){
     else if(r5<0.9){ opts={humvee:true,military:true,rockets:true,armored:true,color:0x55603a,name:'Humvee'}; type='suv'; } // anti-armor turret
     else { opts={police:true,armored:true,color:0x1a1a1a,name:'Armored Police'}; type='suv'; }
   }
-  else if(want>=4){ opts = Math.random()<0.4 ? {police:true,armored:true,color:0x1a1a1a,name:'Armored Police'} : {police:true,color:0x111111,name:'FBI'}; type='suv'; }
-  else if(want>=3 && Math.random()<0.5){ opts = Math.random()<0.5 ? {police:true,armored:true,color:0x222222,name:'Armored Police'} : {police:true,color:0x222222,name:'SWAT'}; type='suv'; }
+  else if(want>=4){ opts = Math.random()<0.3 ? {squad:true,armored:true,color:0x14181f,name:'Squad Truck'} : (Math.random()<0.5 ? {police:true,armored:true,color:0x1a1a1a,name:'Armored Police'} : {police:true,color:0x111111,name:'FBI'}); type=opts.squad?'bus':'suv'; }
+  else if(want>=3){ const r3=Math.random(); if(r3<0.25){ opts={squad:true,armored:true,color:0x1a1f26,name:'Squad Truck'}; type='bus'; } else if(r3<0.6){ opts = Math.random()<0.5 ? {police:true,armored:true,color:0x222222,name:'Armored Police'} : {police:true,color:0x222222,name:'SWAT'}; type='suv'; } }
   const v=makeVehicle(type,x,z,opts);
   v.userData.aiState='police'; v.userData.arrestTimer=0;
+  v.userData.squad=!!opts.squad; v.userData.deployCD=2;
+  v.userData.maxSpeed=v.userData.maxSpeed*0.58;   // police cars are a lot slower now
   v.userData.flank=rand(-1,1); // surround offset, radians around target
   v.userData.shootCD=rand(0.5,2);
   v.userData.tank=!!opts.tank; v.userData.rockets=!!(opts.rockets||opts.tank); v.userData.doubleCannon=!!opts.doubleCannon;
@@ -5355,7 +5376,7 @@ function spawnPoliceCar(){
 function createExplosion(x,y,z,radius,dmg){
   // big blast: layered fire/smoke/sparks scaled by radius
   G.particles.explosion(x,y,z);
-  const extra=Math.min(40,Math.round(radius*2));
+  const extra=Math.min(LOW?12:40,Math.round(radius*(LOW?1:2)));
   G.particles.burst(x,y+1,z,'fire',extra); G.particles.burst(x,y+1,z,'spark',extra);
   G.particles.burst(x,y+2,z,'smoke',Math.round(extra*0.7));
   G.audio.explosion();
@@ -5579,6 +5600,10 @@ function hitscan(origin,dir,range,dmg){
   G.peds.forEach(pe=>{ if(pe.dead||pe.ally) return; const t=raySphere(ro,rd,pe.mesh.position,1.2); if(t>0&&t<bestT){bestT=t;hitPed=pe;hitVeh=null;hitCop=null;} });
   G.copsOnFoot.forEach(c=>{ const t=raySphere(ro,rd,c.mesh.position,0.9); if(t>0&&t<bestT){bestT=t;hitCop=c;hitPed=null;hitVeh=null;} });
   G.police.concat(G.vehicles).forEach(v=>{ if(v.userData.burned)return; const t=raySphere(ro,rd,v.position,2); if(t>0&&t<bestT){bestT=t;hitVeh=v;hitPed=null;hitCop=null;} });
+  // shoot police barricades to break them
+  let hitBar=null;
+  if(G.barricades) G.barricades.forEach(b=>{ const t=raySphere(ro,rd,{x:b.x,y:0,z:b.z},3); if(t>0&&t<bestT){bestT=t;hitBar=b;hitVeh=null;hitPed=null;hitCop=null;} });
+  if(hitBar){ hitBar.hp-=dmg; G.particles.spawn(hitBar.x,0.8,hitBar.z,'spark'); return; }
   const hp=new THREE.Vector3(ro.x+rd.x*bestT,ro.y+rd.y*bestT,ro.z+rd.z*bestT);
   if(hitCop){
     // Riot shield blocks bullets coming at the cop's FRONT — you must flank to hit them
@@ -6288,6 +6313,13 @@ function updateVehiclePlayer(dt){
   if(ud.rackCD>0) ud.rackCD-=dt;
   if(ud.technical && G.mouse.down) fireTurret();      // hold FIRE: mounted gun
   if(ud.missiletruck && G.mouse.down) fireMissileRack(); // hold FIRE: missile rack
+  // a recruited crew member mans the weapon for you when an enemy is close
+  if((ud.technical||ud.missiletruck) && !G.mouse.down && G.peds.some(p=>p.ally&&!p.dead)){
+    let enemyNear=false;
+    for(const v2 of G.police){ if(!v2.userData.burned && Math.hypot(v2.position.x-v.position.x,v2.position.z-v.position.z)<70){ enemyNear=true; break; } }
+    if(!enemyNear) for(const c of G.copsOnFoot){ if(Math.hypot(c.mesh.position.x-v.position.x,c.mesh.position.z-v.position.z)<70){ enemyNear=true; break; } }
+    if(enemyNear){ if(ud.technical) fireTurret(); else fireMissileRack(); }
+  }
   // spike-trap slow
   if(ud.spikeT>0){ ud.spikeT-=dt; }
   G.audio.setEngine(ud.speed,maxS);
@@ -6423,6 +6455,13 @@ function updatePolice(dt){
     // arrest on foot
     if(dist<1.6 && !G.player.inVehicle){ ud.arrestTimer+=dt; if(ud.arrestTimer>3) arrestPlayer(); }
     else ud.arrestTimer=0;
+    // SQUAD TRUCK: drives up and deploys a stack of officers
+    if(ud.squad){ ud.deployCD-=dt;
+      if(dist<55 && ud.deployCD<=0 && G.copsOnFoot.length<(LOW?14:22)){ ud.deployCD=rand(2.5,4);
+        const n=randi(2,3); for(let q=0;q<n;q++) spawnCop(Math.ceil(G.wanted));
+        toast('Squad deployed!');
+      }
+    }
     // shoot on sight at 2+ stars — range/LOS/falloff enforced by aiTryShoot
     ud.shootCD-=dt;
     if(G.wanted>=2 && ud.shootCD<=0){
@@ -6644,6 +6683,72 @@ function spawnJet(type){
   G.jets=G.jets||[];
   G.jets.push({group:g,dir,speed:type==='a10'?72:95,life:14,type,strafeCD:0,bombed:false});
 }
+// ---- Police barricades: blockades you can shoot down ----
+function spawnBarricade(x,z,ang){
+  const g=new THREE.Group();
+  const mat=new THREE.MeshStandardMaterial({color:0xb8a23a,roughness:0.8});
+  for(let k=-1;k<=1;k++){ const b=new THREE.Mesh(new THREE.BoxGeometry(2.0,1.1,0.7),mat); b.position.set(k*2.1,0.55,0); b.castShadow=!LOW; g.add(b);
+    const stripe=new THREE.Mesh(new THREE.BoxGeometry(2.0,0.3,0.72),new THREE.MeshStandardMaterial({color:0x111111})); stripe.position.set(k*2.1,0.55,0); g.add(stripe); }
+  g.position.set(x,0,z); g.rotation.y=ang; G.scene.add(g);
+  const w=6.6, d=1.2;
+  G.barricades.push({mesh:g,x,z,ang,hp:70,w,d});
+}
+function updateBarricades(dt){
+  G.barricades=G.barricades||[];
+  const p=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
+  G.barCD=(G.barCD||0)-dt;
+  const cap=LOW?2:5;
+  if(G.wanted>=2 && G.barCD<=0 && G.barricades.length<cap){
+    G.barCD=rand(3,6);
+    // place across the road ahead of the player
+    const pv=G.player.inVehicle?{x:-Math.sin(G.player.inVehicle.rotation.y),z:-Math.cos(G.player.inVehicle.rotation.y)}:{x:0,z:1};
+    const ax=p.x+pv.x*rand(35,60), az=p.z+pv.z*rand(35,60);
+    spawnBarricade(ax,az,Math.atan2(pv.x,pv.z)+Math.PI/2);
+  }
+  for(let i=G.barricades.length-1;i>=0;i--){ const b=G.barricades[i];
+    if(b.hp<=0){ G.particles.burst(b.x,1,b.z,'spark',8); G.scene.remove(b.mesh); G.barricades.splice(i,1); continue; }
+    if(Math.hypot(b.x-p.x,b.z-p.z)>200){ G.scene.remove(b.mesh); G.barricades.splice(i,1); continue; }
+    // car interaction: ram fast to smash through, otherwise it stops you
+    if(G.player.inVehicle && Math.hypot(b.x-p.x,b.z-p.z)<4.5){
+      const ud=G.player.inVehicle.userData;
+      if(Math.abs(ud.speed)>16){ b.hp-=45; damageVehicle(G.player.inVehicle,12); G.particles.burst(b.x,1,b.z,'spark',4); }
+      else { ud.speed*=0.4; }   // intact barricade blocks you — shoot it or ram it hard
+    }
+  }
+}
+// ---- Police boat: patrols the harbour with a turret when you're near the water ----
+function spawnBoat(){
+  const g=new THREE.Group();
+  const hull=new THREE.Mesh(new THREE.BoxGeometry(3,1,8),new THREE.MeshStandardMaterial({color:0x14202a,metalness:0.3,roughness:0.6})); hull.position.y=0.4; g.add(hull);
+  const cabin=new THREE.Mesh(new THREE.BoxGeometry(2,1,2.5),new THREE.MeshStandardMaterial({color:0xdddddd})); cabin.position.set(0,1.3,-1); g.add(cabin);
+  const lb=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.15,0.3),new THREE.MeshStandardMaterial({color:0xff0000,emissive:0xff0000,emissiveIntensity:2})); lb.position.set(-0.3,2,-1); g.add(lb);
+  const lb2=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.15,0.3),new THREE.MeshStandardMaterial({color:0x0000ff,emissive:0x0000ff,emissiveIntensity:2})); lb2.position.set(0.3,2,-1); g.add(lb2);
+  const turret=new THREE.Group(); turret.position.set(0,1.1,2.2);
+  const tb=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.7),new THREE.MeshStandardMaterial({color:0x222222})); turret.add(tb);
+  const barrel=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.1,1.6,8),new THREE.MeshStandardMaterial({color:0x111111})); barrel.rotation.x=Math.PI/2; barrel.position.z=1; turret.add(barrel);
+  g.add(turret);
+  const p=G.player.mesh.position; g.position.set(p.x+rand(-40,40), -0.1, -G.CITY/2-40);
+  G.scene.add(g);
+  G.boats=G.boats||[]; G.boats.push({group:g,turret,shootCD:1,lb,lb2});
+}
+function updateBoats(dt){
+  G.boats=G.boats||[];
+  const p=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
+  const nearWater = p.z < -G.CITY/2+50;
+  if(nearWater && G.wanted>0 && G.boats.length<1) spawnBoat();
+  for(let i=G.boats.length-1;i>=0;i--){ const b=G.boats[i];
+    if(!nearWater || G.wanted<=0){ G.scene.remove(b.group); G.boats.splice(i,1); continue; }
+    // stay on the water but track the player's x, keep south
+    const tx=clamp(p.x,-G.CITY/2,G.CITY/2), tz=Math.min(p.z-12,-G.CITY/2-20);
+    b.group.position.x=lerp(b.group.position.x,tx,0.02);
+    b.group.position.z=lerp(b.group.position.z,tz,0.02);
+    b.group.position.y=-0.1+Math.sin(performance.now()*0.002)*0.2;
+    const fa=Math.atan2(p.x-b.group.position.x,p.z-b.group.position.z); b.group.rotation.y=lerp2angle(b.group.rotation.y,fa,0.05);
+    const f=Math.floor(performance.now()/180)%2; b.lb.material.emissiveIntensity=f?2:0.1; b.lb2.material.emissiveIntensity=f?0.1:2;
+    b.shootCD-=dt;
+    if(b.shootCD<=0){ const fired=aiTryShoot({x:b.group.position.x,z:b.group.position.z}, 70, 12, 0.45, 'rifle'); b.shootCD=fired?rand(0.7,1.4):0.5; }
+  }
+}
 // ---- Land mines & spike traps deployed by the military at 5 stars ----
 function updateHazards(dt){
   G.mines=G.mines||[]; G.spikes=G.spikes||[];
@@ -6683,7 +6788,7 @@ function updateJets(dt){
   G.jets=G.jets||[];
   const want=Math.ceil(G.wanted);
   G.jetCD=(G.jetCD||0)-dt;
-  const cap=LOW?3:8;   // toward a "squadron" while staying performant
+  const cap=LOW?2:8;   // toward a "squadron" while staying performant
   if(want>=5 && G.jets.length<cap && G.jetCD<=0){ spawnJet(Math.random()<0.75?'a10':'f16'); G.jetCD=rand(1.5,3.5); }
   const p=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
   for(let i=G.jets.length-1;i>=0;i--){ const j=G.jets[i]; j.life-=dt;
@@ -6693,10 +6798,10 @@ function updateJets(dt){
     if(j.type==='a10'){
       // GAU-8 cannon: rake the player while it's within range (car still protects you)
       j.strafeCD-=dt;
-      if(d<110 && j.strafeCD<=0){ j.strafeCD=0.06;
+      if(d<110 && j.strafeCD<=0){ j.strafeCD=LOW?0.14:0.08;
         if(hasLOS({x:j.group.position.x,z:j.group.position.z},p)){ if(Math.random()<0.25) bulletHitPlayer(rand(4,9)); }
-        G.audio.gunshot('rifle');
-        G.particles.burst(p.x+rand(-4,4),0.3,p.z+rand(-4,4),'spark',3);
+        if(Math.random()<(LOW?0.3:0.6)) G.audio.gunshot('rifle');
+        G.particles.burst(p.x+rand(-4,4),0.3,p.z+rand(-4,4),'spark',LOW?2:3);
       }
     } else {
       if(!j.bombed && d<75){ j.bombed=true; fireSalvo({x:j.group.position.x,y:j.group.position.y-2,z:j.group.position.z}, p, 3, 0.6); }
@@ -7103,6 +7208,8 @@ function loop(now){
     updateCozyLights();
     updateJets(sdt);
     updateHazards(sdt);
+    updateBarricades(sdt);
+    updateBoats(sdt);
     updateTrafficLights(sdt);
     updateWater(t);
     updateFountain();
@@ -7139,11 +7246,12 @@ function initThree(){
   G.scene=new THREE.Scene();
   G.scene.fog=new THREE.FogExp2(0xC8A882,0.0085);
   G.scene.background=new THREE.Color(0x87b8d8); // bulletproof flat sky (no GLSL)
-  // cheap environment map (equirect gradient) so PBR materials get reflective sheen
-  (function(){ const ec=document.createElement('canvas'); ec.width=64; ec.height=32; const g=ec.getContext('2d');
+  // cheap environment map for reflective sheen — DESKTOP ONLY (per-fragment env
+  // sampling is too heavy for mobile GPUs).
+  if(!LOW){ const ec=document.createElement('canvas'); ec.width=64; ec.height=32; const g=ec.getContext('2d');
     const grd=g.createLinearGradient(0,0,0,32); grd.addColorStop(0,'#bcd4ec'); grd.addColorStop(0.5,'#8fb6d8'); grd.addColorStop(0.55,'#9a9488'); grd.addColorStop(1,'#54504a');
     g.fillStyle=grd; g.fillRect(0,0,64,32);
-    const tex=new THREE.CanvasTexture(ec); tex.mapping=THREE.EquirectangularReflectionMapping; G.scene.environment=tex; G.envTex=tex; })();
+    const tex=new THREE.CanvasTexture(ec); tex.mapping=THREE.EquirectangularReflectionMapping; G.scene.environment=tex; G.envTex=tex; }
   G.camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,2000);
   G.camera.position.set(0,10,20);
 
@@ -7193,12 +7301,12 @@ function initThree(){
   G.sunSprite=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(sc),fog:false,depthWrite:false,transparent:true}));
   G.sunSprite.scale.set(80,80,1); G.scene.add(G.sunSprite);
 
-  G.particles=new ParticleSystem(G.scene,LOW?160:400);
+  G.particles=new ParticleSystem(G.scene,LOW?120:400);
 
   // ---- Cozy night lighting: a pool of warm point lights that drift to nearby
   // intersections after dark, plus headlights on the car you're driving ----
   G.cozyLights=[];
-  const nLights=LOW?4:14;
+  const nLights=LOW?2:14;
   for(let i=0;i<nLights;i++){ const pl=new THREE.PointLight(0xffb265,0,30,1.7); pl.position.set(0,6,0); G.scene.add(pl); G.cozyLights.push(pl); }
   G.headlight=new THREE.SpotLight(0xfff3d0,0,55,0.5,0.4,1); G.headlight.position.set(0,2,0);
   G.scene.add(G.headlight); G.scene.add(G.headlight.target);
