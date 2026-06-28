@@ -4885,7 +4885,7 @@ const ASSET_DEFS=[
   {name:'mito',       file:'models/mito.glb',        kind:'car', len:4.1, face:0,        low:false},
   {name:'streetlight',file:'models/streetlight.glb', kind:'prop',height:7,               low:true},
   {name:'nyc',        file:'models/ny_buildings.glb',kind:'city', height:120,            low:false},
-  {name:'road',       file:'models/road.glb',        kind:'road',                        low:false},
+  // road model removed — its flat slab caused z-fighting/visual bugs
 ];
 function normalizeModel(obj,def){
   obj.updateMatrixWorld(true);
@@ -4909,7 +4909,20 @@ function normalizeModel(obj,def){
   obj.position.x-=c.x; obj.position.z-=c.z; obj.position.y-=box.min.y; // center x/z, sit on ground
   if(def.face) obj.rotation.y+=def.face;
   wrap.add(obj);
-  wrap.traverse(o=>{ if(o.isMesh){ o.castShadow=!LOW; o.receiveShadow=!LOW; if(o.material&&o.material.transparent&&o.material.opacity>0.95) o.material.transparent=false; } });
+  // Material fixups — many GLB exports use KHR transmission/clearcoat which render
+  // as invisible/black glass in three r128. Force them to solid, opaque materials.
+  wrap.traverse(o=>{ if(!o.isMesh||!o.material) return;
+    o.castShadow=!LOW; o.receiveShadow=!LOW; o.frustumCulled=true;
+    const mats=Array.isArray(o.material)?o.material:[o.material];
+    mats.forEach(m=>{
+      if('transmission' in m) m.transmission=0;
+      if('thickness' in m) m.thickness=0;
+      if('ior' in m) m.ior=1.0;
+      m.transparent=false; m.opacity=1; m.depthWrite=true; m.side=THREE.FrontSide;
+      if(m.metalness!==undefined && m.metalness>0.9 && !m.map) m.metalness=0.6; // avoid pure-mirror black
+      m.needsUpdate=true;
+    });
+  });
   return wrap;
 }
 let assetTotal=0, assetDone=0;
@@ -4982,7 +4995,7 @@ function createPlayer(){
   G.scene.add(mesh);
   G.player={
     mesh, vx:0,vz:0,vy:0, onGround:true, height:0.9, rotY:0,
-    hp:100, armor:0, speed:0, running:false, inVehicle:null,
+    hp:200, maxHp:200, armor:0, speed:0, running:false, inVehicle:null, regenT:0,
     weapon:'fists',
     weapons:{fists:{ammo:Infinity,reserve:0}, pistol:{ammo:15,reserve:45}}, // start with a pistol
     walkPhase:0,
@@ -5099,7 +5112,7 @@ function showVehName(name){ UI.vehName.textContent=name; UI.vehName.style.opacit
 function damageFlash(){ UI.dmgFlash.style.opacity=0.8; }
 
 function updateHUD(){
-  UI.hp.style.width=clamp(G.player.hp,0,100)+'%';
+  UI.hp.style.width=clamp(G.player.hp/(G.player.maxHp||100)*100,0,100)+'%';
   UI.armor.style.width=clamp(G.player.armor,0,100)+'%';
   // stars
   let s='';
@@ -5290,13 +5303,27 @@ function damagePlayer(dmg){
     const absorb=Math.min(G.player.armor,dmg*0.5);
     G.player.armor-=absorb; dmg-=absorb;
   }
-  G.player.hp-=dmg; damageFlash();
+  G.player.hp-=dmg; damageFlash(); G.player.regenT=6; // pause regen after a hit
   if(G.player.hp<=0){ G.player.hp=0; playerDeath(); }
 }
 function killPed(pe){
-  pe.dead=true; G.scene.remove(pe.mesh);
-  G.money+=25;
-  // ragdoll skip; spawn money pickup feeling
+  if(pe.dead) return;
+  pe.dead=true; G.money+=25;
+  G.particles.burst(pe.mesh.position.x,1.2,pe.mesh.position.z,'spark',6);
+  // falling death: keep the body, tip it over onto the ground, then despawn
+  G.corpses=G.corpses||[];
+  const away=Math.atan2(pe.mesh.position.z-G.player.mesh.position.z, pe.mesh.position.x-G.player.mesh.position.x);
+  G.corpses.push({mesh:pe.mesh, t:0, axis: Math.random()<0.5?'x':'z', dir: Math.random()<0.5?1:-1, away});
+}
+function updateCorpses(dt){
+  if(!G.corpses) return;
+  for(let i=G.corpses.length-1;i>=0;i--){ const c=G.corpses[i]; c.t+=dt;
+    const target=c.dir*Math.PI/2;                      // fall flat
+    if(c.axis==='x') c.mesh.rotation.x=lerp(c.mesh.rotation.x,target,0.18);
+    else c.mesh.rotation.z=lerp(c.mesh.rotation.z,target,0.18);
+    c.mesh.position.y=lerp(c.mesh.position.y,0.1,0.18); // settle to ground
+    if(c.t>7){ G.scene.remove(c.mesh); G.corpses.splice(i,1); }   // despawn
+  }
 }
 function damageVehicle(v,dmg){
   if(v.userData.burned) return;
@@ -5317,7 +5344,7 @@ function respawnPlayer(){
   let best=G.hospitals[0],bd=1e9;
   G.hospitals.forEach(h=>{ const d=Math.hypot(h.x-G.player.mesh.position.x,h.z-G.player.mesh.position.z); if(d<bd){bd=d;best=h;} });
   G.player.mesh.position.set(best.x,0,best.z);
-  G.player.hp=100; G.player.armor=0; G.player.vx=G.player.vz=G.player.vy=0;
+  G.player.hp=G.player.maxHp; G.player.armor=0; G.player.vx=G.player.vz=G.player.vy=0;
   clearWanted();
   // clear weapons except fists
   G.player.weapons={fists:{ammo:Infinity,reserve:0}}; G.player.weapon='fists';
@@ -5334,14 +5361,17 @@ function nearestVehicle(maxd){
   return best;
 }
 function enterVehicle(v){
+  // taking over a police/military vehicle: pull it out of the police AI list
+  const pi=G.police.indexOf(v);
+  if(pi>=0){ G.police.splice(pi,1); G.vehicles.push(v);
+    v.userData.police=false; v.userData.military=false; v.userData.rockets=false;
+    addWanted(2); toast('Commandeered a police vehicle'); }
   G.player.inVehicle=v; v.userData.occupied=true; v.userData.isPlayer=true;
   G.player.mesh.visible=false;
   G.audio.startEngine();
   showVehName(v.userData.name);
-  // wanted: stealing
-  if(!v.userData.police){ // stealing a civilian car
-    if(anyNpcSees()){ addWanted(1); }
-  }
+  // wanted: stealing a civilian car while seen
+  if(!v.userData.wasPolice && pi<0){ if(anyNpcSees()){ addWanted(1); } }
   v.userData.stationary=false; v.userData.aiState='player';
 }
 function exitVehicle(force){
@@ -5440,6 +5470,12 @@ function hitscan(origin,dir,range,dmg){
     if(hitCop.hp<=0) killCop(hitCop);
     return;
   }
+  // shoot down the helicopter: if your aim points at it (within ~10°) it takes the hit
+  if(G.heli && !G.heli.crashing){
+    const hx=G.heli.group.position.x-ro.x, hz=G.heli.group.position.z-ro.z, hdd=Math.hypot(hx,hz);
+    if(hdd<range){ const dot=(hx*rd.x+hz*rd.z)/(hdd||1); if(dot>0.985){ damageHeli(dmg);
+      G.particles.spawn(G.heli.group.position.x,G.heli.group.position.y,G.heli.group.position.z,'spark'); } }
+  }
   G.particles.spawn(hp.x,hp.y,hp.z,'spark');
   if(hitPed){ hitPed.hp-=dmg; hitPed.state='flee'; if(hitPed.hp<=0){ killPed(hitPed); addWanted(1); checkMissionKill(hitPed); }
     if(hitPed.gang){ enrageGang(hitPed); } }
@@ -5448,9 +5484,12 @@ function hitscan(origin,dir,range,dmg){
   }
 }
 function killCop(c){
-  c.hp=0; // marked; updateCops removes it next tick and grants stars
-  G.scene.remove(c.mesh);
+  c.hp=0;
   const i=G.copsOnFoot.indexOf(c); if(i>=0) G.copsOnFoot.splice(i,1);
+  G.particles.burst(c.mesh.position.x,1.2,c.mesh.position.z,'spark',6);
+  // falling death (keep the body briefly)
+  G.corpses=G.corpses||[];
+  G.corpses.push({mesh:c.mesh, t:0, axis:Math.random()<0.5?'x':'z', dir:Math.random()<0.5?1:-1});
   G.money+=50; addWanted(2); // killing an officer = +2 stars
 }
 function raySphere(o,d,c,r){
@@ -5468,6 +5507,10 @@ function meleePunch(){
   G.peds.forEach(pe=>{ if(pe.dead)return; const d=Math.hypot(pe.mesh.position.x-fx,pe.mesh.position.z-fz); if(d<bd){bd=d;best=pe;} });
   if(best){
     best.hp-=10; triggerPunch(best.mesh);
+    // recoil: knock the victim back from the punch
+    const away=Math.atan2(best.mesh.position.z-o.z,best.mesh.position.x-o.x);
+    const kc=collideCircle(best.mesh.position.x+Math.cos(away)*0.7, best.mesh.position.z+Math.sin(away)*0.7, 0.4);
+    best.mesh.position.x=kc.x; best.mesh.position.z=kc.z;
     if(best.hp<=0){ killPed(best); addWanted(0.5); }     // killing = a bit more heat
     else { addWanted(0.34);                                // a single punch = minor heat (3 → 1 star)
       // many civilians now fight back instead of always fleeing
@@ -5665,9 +5708,9 @@ function openShop(shop){
       ['Sniper (+25)',2000,()=>giveWeapon('sniper')],
       ['Body Armor',200,()=>{G.player.armor=100;}]];
   } else if(shop.type==='hospital'){
-    list=[['Full Heal',0,()=>{G.player.hp=100;}],['Body Armor',200,()=>{G.player.armor=100;}]];
+    list=[['Full Heal',0,()=>{G.player.hp=G.player.maxHp;}],['Body Armor',200,()=>{G.player.armor=100;}]];
   } else if(shop.type==='food'){
-    list=[['Burger (+20 HP)',30,()=>{G.player.hp=Math.min(100,G.player.hp+20);}]];
+    list=[['Burger (+40 HP)',30,()=>{G.player.hp=Math.min(G.player.maxHp,G.player.hp+40);}]];
   }
   list.forEach(it=>{
     const d=document.createElement('div'); d.className='item';
@@ -6210,14 +6253,12 @@ function updatePolice(dt){
     // arrest on foot
     if(dist<1.6 && !G.player.inVehicle){ ud.arrestTimer+=dt; if(ud.arrestTimer>3) arrestPlayer(); }
     else ud.arrestTimer=0;
-    // shoot on sight at 2+ stars (FBI/military more accurate & frequent)
+    // shoot on sight at 2+ stars — range/LOS/falloff enforced by aiTryShoot
     ud.shootCD-=dt;
-    if(G.wanted>=2 && dist<55 && ud.shootCD<=0 && hasLOS(v.position,p)){
-      ud.shootCD = ud.military?0.5 : (Math.ceil(G.wanted)>=4?0.7:1.2);
-      const hit = Math.random() < (ud.military?0.6:0.4);
-      if(hit) damagePlayer(ud.military?rand(8,16):rand(4,9));
-      G.audio.gunshot(ud.military?'rifle':'pistol');
-      G.particles.burst(v.position.x-Math.sin(ry)*1.5,1.4,v.position.z-Math.cos(ry)*1.5,'muzzle',3);
+    if(G.wanted>=2 && ud.shootCD<=0){
+      const fired=aiTryShoot(v.position, ud.military?46:38, ud.military?14:8, ud.military?0.5:0.34, ud.military?'rifle':'pistol');
+      if(fired) ud.shootCD = ud.military?0.6 : (Math.ceil(G.wanted)>=4?0.8:1.3);
+      else ud.shootCD=0.4; // recheck soon
     }
     // tanks & rocket units: aim turret and fire rockets at the player
     if(ud.rockets){
@@ -6270,16 +6311,12 @@ function updateCops(dt){
 
     // Decide: arrest (low threat) vs kill (high threat / player armed & shooting)
     const lethal = G.wanted>=3 || (G.player.weapon!=='fists' && G.mouse.down) || G.player.inVehicle;
-    const los = hasLOS(c.mesh.position,{x:px,z:pz});
     if(lethal){
-      // shoot to kill
+      // shoot to kill — range/LOS/falloff enforced by aiTryShoot
       c.shootCD-=dt;
-      if(dist<45 && c.shootCD<=0 && los){
-        c.shootCD = c.swat?0.7:1.1;
-        if(Math.random() < (c.swat?0.55:0.4)) damagePlayer(c.swat?rand(7,14):rand(4,9));
-        G.audio.gunshot(c.swat?'smg':'pistol');
-        const fx=c.mesh.position.x+Math.sin(faceAng)*0.6, fz=c.mesh.position.z+Math.cos(faceAng)*0.6;
-        G.particles.burst(fx,1.4,fz,'muzzle',3);
+      if(c.shootCD<=0){
+        const fired=aiTryShoot(c.mesh.position, c.swat?40:34, c.swat?12:8, c.swat?0.5:0.36, c.swat?'smg':'pistol');
+        c.shootCD = fired ? (c.swat?0.8:1.2) : 0.4;
       }
     } else {
       // try to arrest: get adjacent on foot for 3 continuous seconds
@@ -6291,34 +6328,81 @@ function updateCops(dt){
 function lerp2angle(a,b,t){ let d=b-a; while(d>Math.PI)d-=TAU; while(d<-Math.PI)d+=TAU; return a+d*t; }
 // line of sight: no building between two points (cheap segment-vs-AABB test)
 function hasLOS(a,b){
-  const dx=b.x-a.x, dz=b.z-a.z; const len=Math.hypot(dx,dz)||1; const steps=Math.min(20,Math.ceil(len/6));
+  const dx=b.x-a.x, dz=b.z-a.z; const len=Math.hypot(dx,dz)||1; const steps=Math.min(24,Math.ceil(len/5));
   for(let i=1;i<steps;i++){ const x=a.x+dx*i/steps, z=a.z+dz*i/steps;
     for(const bb of G.buildingAABBs){ if(bb.minY>2) continue; if(x>bb.minX&&x<bb.maxX&&z>bb.minZ&&z<bb.maxZ) return false; }
   }
   return true;
 }
-// Police helicopter — appears at 3+ stars, tracks player with a spotlight, strafes at 4+
+// Centralised AI gunfire: an NPC can ONLY hit the player when in range AND with a
+// clear line of sight; accuracy falls off with distance. Returns true if a shot
+// was actually fired (used to gate the shooter's cooldown). Fixes "shoot from
+// anywhere / hit you across the map".
+function aiTryShoot(fromPos, range, baseDmg, accuracy, sound){
+  const p=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
+  const d=Math.hypot(p.x-fromPos.x,p.z-fromPos.z);
+  if(d>range) return false;                 // out of range — no hit possible
+  if(!hasLOS(fromPos,p)) return false;       // wall between us — blocked
+  G.audio.gunshot(sound||'pistol');
+  G.particles.burst(fromPos.x,1.4,fromPos.z,'muzzle',3);
+  const falloff=clamp(1-d/range,0.1,1);      // closer = more accurate
+  if(Math.random()<accuracy*falloff){ damagePlayer(baseDmg*(0.6+0.4*falloff)); }
+  return true;
+}
+// Police helicopter — 3+ stars. Has health, can be SHOT DOWN (crash physics +
+// blast), and at 5 stars fires rocket artillery at the player.
 function updateHelicopter(dt,p){
   const want=Math.ceil(G.wanted);
   if(want>=3 && !G.heli){ spawnHelicopter(); }
-  if(want<3 && G.heli){ G.scene.remove(G.heli.group); G.heli=null; }
+  if(want<3 && G.heli && !G.heli.crashing){ G.scene.remove(G.heli.group); G.heli=null; }
   if(!G.heli) return;
   const h=G.heli;
-  // hover toward a point above & beside the player
-  const tx=p.x, tz=p.z, ty=42;
+  h.rotor.rotation.y += dt*(h.crashing?60:30);
+
+  if(h.crashing){
+    // full crash physics: tumble out of the sky
+    h.vy-=22*dt; h.group.position.y+=h.vy*dt;
+    h.group.position.x+=h.vx*dt; h.group.position.z+=h.vz*dt;
+    h.group.rotation.z+=h.spin*dt; h.group.rotation.x+=h.spin*0.6*dt;
+    if(Math.random()<0.6) G.particles.spawn(h.group.position.x,h.group.position.y,h.group.position.z,'fire');
+    G.particles.spawn(h.group.position.x,h.group.position.y,h.group.position.z,'smoke');
+    if(h.group.position.y<=1){
+      // impact: big explosion that damages anything nearby
+      createExplosion(h.group.position.x,1,h.group.position.z,16,90);
+      G.scene.remove(h.group); G.heli=null;
+    }
+    return;
+  }
+
+  // hover toward / above the player
+  const tx=p.x, tz=p.z, ty=28;
   h.group.position.x=lerp(h.group.position.x,tx,0.02);
   h.group.position.z=lerp(h.group.position.z,tz,0.02);
   h.group.position.y=lerp(h.group.position.y,ty,0.03);
-  h.rotor.rotation.y+=dt*30;
-  // face travel direction
   const fdx=tx-h.group.position.x, fdz=tz-h.group.position.z;
   if(Math.hypot(fdx,fdz)>1) h.group.rotation.y=lerp(h.group.rotation.y,Math.atan2(fdx,fdz),0.05);
-  // spotlight cone tracks player
   if(h.spot){ h.spot.target.position.set(p.x,0,p.z); h.spot.target.updateMatrixWorld(); }
-  // strafe fire at 4+
-  if(Math.ceil(G.wanted)>=4){ h.fireCD-=dt; if(h.fireCD<=0){ h.fireCD=0.4;
-    if(Math.random()<0.5 && hasLOS({x:h.group.position.x,z:h.group.position.z},p)){ damagePlayer(rand(4,10)); G.audio.gunshot('rifle');
+  // smoke when damaged
+  if(h.hp<h.maxHp*0.4 && Math.random()<0.4) G.particles.spawn(h.group.position.x,h.group.position.y,h.group.position.z,'smoke');
+
+  const hpos={x:h.group.position.x,z:h.group.position.z};
+  // 4+ stars: minigun strafe
+  if(want>=4){ h.fireCD-=dt; if(h.fireCD<=0){ h.fireCD=0.4;
+    if(hasLOS(hpos,p)){ if(Math.random()<0.5) damagePlayer(rand(4,9)); G.audio.gunshot('rifle');
       G.particles.burst(p.x+rand(-2,2),0.3,p.z+rand(-2,2),'spark',4); } } }
+  // 5 stars: rocket artillery
+  if(want>=5){ h.rocketCD-=dt; if(h.rocketCD<=0 && hasLOS(hpos,p)){ h.rocketCD=rand(2.5,4.5);
+    const o=new THREE.Vector3(h.group.position.x,h.group.position.y-1,h.group.position.z);
+    const d=new THREE.Vector3(p.x-o.x,-1,p.z-o.z).normalize(); spawnRocket(o,d); G.audio.explosion(); } }
+}
+function damageHeli(dmg){
+  const h=G.heli; if(!h||h.crashing) return;
+  h.hp-=dmg;
+  if(h.hp<=0){ // shot down → crash
+    h.crashing=true; h.vy=0; h.vx=rand(-6,6); h.vz=rand(-6,6); h.spin=rand(-3,3);
+    if(h.spot) h.spot.intensity=0;
+    bigMsg('HELICOPTER DOWN','#ff8800'); G.money+=250;
+  }
 }
 function spawnHelicopter(){
   const g=new THREE.Group();
@@ -6336,7 +6420,7 @@ function spawnHelicopter(){
   g.add(spot); g.add(spot.target);
   g.position.set(G.player.mesh.position.x,60,G.player.mesh.position.z);
   G.scene.add(g);
-  G.heli={group:g,rotor,spot,fireCD:1};
+  G.heli={group:g,rotor,spot,fireCD:1,rocketCD:3,hp:120,maxHp:120,crashing:false,vy:0,vx:0,vz:0,spin:0};
 }
 function arrestPlayer(){
   G.money=Math.max(0,G.money-100); clearWanted();
@@ -6345,7 +6429,7 @@ function arrestPlayer(){
   // respawn at hospital
   let best=G.hospitals[0],bd=1e9;
   G.hospitals.forEach(h=>{const d=Math.hypot(h.x-G.player.mesh.position.x,h.z-G.player.mesh.position.z);if(d<bd){bd=d;best=h;}});
-  G.player.mesh.position.set(best.x,0,best.z); G.player.hp=100;
+  G.player.mesh.position.set(best.x,0,best.z); G.player.hp=G.player.maxHp;
 }
 
 // =================== PEDS UPDATE ===================
@@ -6376,10 +6460,11 @@ function updatePeds(dt,t){
     } else if(pe.state==='panic'){
       moving=false; pe.pauseT-=dt; if(pe.pauseT<=0){ pe.state='flee'; pe.fleeDir=rand(0,TAU); }
     } else if(pe.state==='combat'){
-      // approach and shoot player
+      // armed gang member: approach and shoot — range/LOS enforced
       tx=px; tz=pz; spd=pe.speed*1.2;
-      if(d<25 && Math.random()<0.01){ damagePlayer(rand(2,6)); }
-      if(d>3 === false){ moving=false; }
+      if(d<6) moving=false;
+      pe.shootCD=(pe.shootCD||rand(0.5,1.5))-dt;
+      if(pe.shootCD<=0){ const fired=aiTryShoot(pe.mesh.position, 26, 6, 0.4, 'pistol'); pe.shootCD = fired?rand(0.8,1.6):0.4; }
     } else if(pe.state==='fight'){
       // unarmed civilian fighting back: chase and throw punches up close
       if(d>1.5){ tx=px; tz=pz; spd=pe.speed*1.25; }
@@ -6436,6 +6521,7 @@ function updateBullets(dt){
         for(const v of G.vehicles.concat(G.police)){ if(Math.hypot(v.position.x-b.mesh.position.x,v.position.z-b.mesh.position.z)<2.5){ explode=true; break; } }
         for(const pe of G.peds){ if(!pe.dead&&Math.hypot(pe.mesh.position.x-b.mesh.position.x,pe.mesh.position.z-b.mesh.position.z)<2){ explode=true; break; } }
         if(!explode){ const pp=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position; if(Math.hypot(pp.x-b.mesh.position.x,pp.z-b.mesh.position.z)<2 && b.mesh.position.y<3) explode=true; }
+        if(!explode && G.heli && !G.heli.crashing){ const hp2=G.heli.group.position; if(Math.hypot(hp2.x-b.mesh.position.x,hp2.z-b.mesh.position.z)<4 && Math.abs(hp2.y-b.mesh.position.y)<5){ damageHeli(60); explode=true; } }
       }
     }
     if(b.life<=0){ if(b.type==='rocket'||b.type==='grenade') explode=true; }
@@ -6459,6 +6545,14 @@ function updateFireZones(dt){
 }
 
 // =================== DAY/NIGHT & SKY ===================
+function paintSky(top,mid,horizon){
+  const c=G.skyCanvas.getContext('2d');
+  const g=c.createLinearGradient(0,0,0,128);
+  g.addColorStop(0,'#'+top.getHexString());
+  g.addColorStop(0.55,'#'+mid.getHexString());
+  g.addColorStop(1,'#'+horizon.getHexString());
+  c.fillStyle=g; c.fillRect(0,0,8,128); G.skyTex.needsUpdate=true;
+}
 function updateDayNight(dt){
   G.time+=dt*(86400/G.dayLength);
   if(G.time>86400) G.time-=86400;
@@ -6479,6 +6573,20 @@ function updateDayNight(dt){
   G.ambient.intensity=lerp(G.ambient.intensity,amb,0.05);
   G.scene.fog.color.lerp(sky,0.05);
   if(G.scene.background && G.scene.background.lerp) G.scene.background.lerp(sky,0.05);
+  // gradient sky dome + sun/moon billboard
+  if(G.skyDome){
+    G.skyDome.position.copy(G.camera.position);          // keep sky centred on camera
+    const top=sky.clone().lerp(new THREE.Color(0x16356a),0.55);
+    const horiz=sky.clone().lerp(new THREE.Color(0xffffff),0.12);
+    paintSky(top,sky,horiz);
+    if(G.sunSprite){
+      const sd=new THREE.Vector3(sx,sy,sz).normalize().multiplyScalar(760);
+      G.sunSprite.position.copy(G.camera.position).add(sd);
+      const moon=(hour<6||hour>19);
+      G.sunSprite.material.color.copy(moon?new THREE.Color(0xbfc8e0):col.clone().lerp(new THREE.Color(0xffffff),0.5));
+      G.sunSprite.scale.setScalar(moon?44:80);
+    }
+  }
   // building windows + beacons light up as it gets dark
   const night=(hour<6.5||hour>18.5);
   const winI=night?1.0:0;
@@ -6506,7 +6614,7 @@ function updatePickups(dt){
     pk.light.intensity=1+Math.sin(pk.t*4)*0.5;
     if(Math.hypot(pk.x-p.x,pk.z-p.z)<1.5 && !G.player.inVehicle){
       if(pk.kind==='armor') G.player.armor=100;
-      else if(pk.kind==='health') G.player.hp=Math.min(100,G.player.hp+25);
+      else if(pk.kind==='health') G.player.hp=Math.min(G.player.maxHp,G.player.hp+50);
       else giveWeapon(pk.kind);
       G.audio.jingle(); toast('Picked up '+(WEAPONS[pk.kind]?WEAPONS[pk.kind].name:pk.kind));
       G.scene.remove(pk.mesh); G.scene.remove(pk.light); G.pickups.splice(i,1);
@@ -6601,11 +6709,15 @@ function loop(now){
     const sdt=dt*G.timeScale;
     const t=now/1000;
     updatePlayer(sdt,t);
+    // slow health regen (player buff): regenerates after a few seconds without damage
+    if(G.player.regenT>0) G.player.regenT-=sdt;
+    else if(G.player.hp>0 && G.player.hp<G.player.maxHp) G.player.hp=Math.min(G.player.maxHp,G.player.hp+8*sdt);
     updateCamera(sdt);
     if(G.shake>0){ const s=G.shake; G.camera.position.x+=rand(-1,1)*s*0.35; G.camera.position.y+=rand(-1,1)*s*0.35; G.camera.position.z+=rand(-1,1)*s*0.35; }
     if(G.inStore) updateStore(sdt);
     updateVehicles(sdt);
     updatePeds(sdt,t);
+    updateCorpses(sdt);
     updateBullets(sdt);
     updateFireZones(sdt);
     updatePickups(sdt);
@@ -6679,8 +6791,22 @@ function initThree(){
   }
   G.scene.add(G.sun); G.scene.add(G.sun.target);
   // hemisphere fill so unlit faces aren't pitch black (helps mobile without shadows)
-  G.scene.add(new THREE.HemisphereLight(0x9fb8d8,0x3a3a30,0.35));
+  G.hemi=new THREE.HemisphereLight(0x9fb8d8,0x3a3a30,0.35); G.scene.add(G.hemi);
   G.skyMat=null;
+
+  // Gradient sky dome via a tiny CanvasTexture (no GLSL → safe on iOS), recoloured by time of day.
+  G.skyCanvas=document.createElement('canvas'); G.skyCanvas.width=8; G.skyCanvas.height=128;
+  G.skyTex=new THREE.CanvasTexture(G.skyCanvas);
+  const dome=new THREE.Mesh(new THREE.SphereGeometry(900,24,16),
+    new THREE.MeshBasicMaterial({map:G.skyTex,side:THREE.BackSide,fog:false,depthWrite:false}));
+  G.scene.add(dome); G.skyDome=dome;
+  paintSky(new THREE.Color(0x3a6fb0), new THREE.Color(0x9fc0e0), new THREE.Color(0xC8A882));
+  // sun/moon billboard
+  const sc=document.createElement('canvas'); sc.width=sc.height=64; const sg=sc.getContext('2d');
+  const grd=sg.createRadialGradient(32,32,0,32,32,32); grd.addColorStop(0,'rgba(255,255,255,1)'); grd.addColorStop(0.3,'rgba(255,250,220,0.95)'); grd.addColorStop(1,'rgba(255,240,200,0)');
+  sg.fillStyle=grd; sg.fillRect(0,0,64,64);
+  G.sunSprite=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(sc),fog:false,depthWrite:false,transparent:true}));
+  G.sunSprite.scale.set(80,80,1); G.scene.add(G.sunSprite);
 
   G.particles=new ParticleSystem(G.scene,LOW?160:400);
   window.addEventListener('resize',()=>{ G.camera.aspect=innerWidth/innerHeight; G.camera.updateProjectionMatrix(); G.renderer.setSize(innerWidth,innerHeight); });
