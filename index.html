@@ -127,6 +127,8 @@
   #btnSprint{ left:3vmin; bottom:calc(4vmin + clamp(96px,26vmin,190px) + 2vmin); width:clamp(52px,12vmin,84px); height:clamp(52px,12vmin,84px); }
   #btnAction{ left:calc(3vmin + clamp(52px,12vmin,84px) + 2vmin); bottom:calc(4vmin + clamp(96px,26vmin,190px) + 2vmin);
               width:clamp(52px,12vmin,84px); height:clamp(52px,12vmin,84px); background:rgba(120,220,120,0.42); border-color:#aef0ae; }
+  #btnRecruit{ left:calc(3vmin + 2*(clamp(52px,12vmin,84px) + 2vmin)); bottom:calc(4vmin + clamp(96px,26vmin,190px) + 2vmin);
+              width:clamp(50px,11vmin,78px); height:clamp(50px,11vmin,78px); background:rgba(120,255,180,0.3); border-color:#9ff0c0; font-size:clamp(10px,2vmin,13px); }
   /* button to toggle touch UI on/off */
   #touchToggle { position:fixed; top:8px; left:50%; transform:translateX(-58%); z-index:120; pointer-events:auto; display:none;
     background:rgba(0,0,0,0.5); color:#fff; border:1px solid #888; border-radius:6px; padding:5px 10px;
@@ -226,6 +228,7 @@
   <div id="btnReload" class="tbtn">R</div>
   <div id="btnCam" class="tbtn">CAM</div>
   <div id="btnAction" class="tbtn">E<br>use</div>
+  <div id="btnRecruit" class="tbtn">CREW</div>
 </div>
 <button id="touchToggle">📱 Touch</button>
 <button id="hdToggle">HD</button>
@@ -4297,8 +4300,8 @@ function* generateWorld(){
       const isDown=downtown.has(key);
       // distance from center → taller toward downtown/core, shorter at edges (residential)
       const edge=Math.max(Math.abs(bx-cityMid),Math.abs(bz-cityMid))/cityMid; // 0 center .. 1 edge
-      let count=isDown?randi(2,4):randi(3,8);
-      if(LOW) count=Math.max(1,Math.round(count*0.55)); // lighter scene on phones
+      let count=isDown?randi(3,6):randi(4,10);
+      if(LOW) count=Math.max(1,Math.round(count*0.5)); // lighter scene on phones
       for(let k=0;k<count;k++){
         const big=isDown||edge<0.4;
         const fw=big?rand(16,40):rand(10,28), fd=big?rand(16,40):rand(10,28);
@@ -4762,6 +4765,7 @@ const VEHTYPES={
   bus:{name:'Coach',L:12,W:2.5,H:3,maxSpeed:16,colors:[0xe67e22,0xeeddbb],wheels:4},
   taxi:{name:'Cabbie',L:4.2,W:1.7,H:1.4,maxSpeed:28,colors:[0xf1c40f],wheels:4,taxi:true},
   moto:{name:'PCJ-600',L:2.2,W:0.7,H:1.1,maxSpeed:38,colors:[0xc0392b,0x111111,0x2980b9],wheels:2,moto:true},
+  technical:{name:'Technical',L:5.2,W:2.0,H:1.7,maxSpeed:26,colors:[0x4a4a3a,0x556b2f,0x3a3a3a],wheels:4,bed:true,technical:true},
 };
 
 function makeVehicle(type,x,z,opts){
@@ -4820,6 +4824,19 @@ function makeVehicle(type,x,z,opts){
     barrel.rotation.x=Math.PI/2; barrel.position.set(0,t.H+0.3,1); g.add(barrel);
   }
 
+  // mounted turret on the technical / gun truck (player-operated)
+  let turretMount=null;
+  if(t.technical){
+    turretMount=new THREE.Group(); turretMount.position.set(0,t.H+0.2,-t.L*0.22);
+    const base=new THREE.Mesh(new THREE.CylinderGeometry(0.35,0.45,0.4,10),new THREE.MeshStandardMaterial({color:0x2a2a22,metalness:0.5,roughness:0.6}));
+    turretMount.add(base);
+    const gunbody=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.4,0.9),new THREE.MeshStandardMaterial({color:0x1c1c18}));
+    gunbody.position.set(0,0.4,0); turretMount.add(gunbody);
+    const barrel=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,1.6,8),new THREE.MeshStandardMaterial({color:0x111111}));
+    barrel.rotation.x=Math.PI/2; barrel.position.set(0,0.4,1.0); turretMount.add(barrel);
+    g.add(turretMount);
+  }
+
   g.position.set(x,wr,z);
   g.userData={
     type, vtype:t, name:opts.name||t.name, wheels, speed:0, steer:0, health:100,
@@ -4827,7 +4844,7 @@ function makeVehicle(type,x,z,opts){
     color, lightbar, vx:0, vz:0, drift:0, onFire:false, fireTimer:0, smoking:false,
     burned:false, exitTimer:0, stationary:opts.stationary, aiState:'idle',
     L:t.L,W:t.W,H:t.H, maxSpeed:t.maxSpeed, wr,
-    targetWaypoint:null, despawnTimer:0,
+    targetWaypoint:null, despawnTimer:0, technical:!!t.technical, turretMount, turretCD:0,
   };
   G.scene.add(g);
   return g;
@@ -4835,7 +4852,7 @@ function makeVehicle(type,x,z,opts){
 
 function spawnTraffic(){
   const half=G.CITY/2, offset=-half+CELL/2;
-  const nTraffic=LOW?26:55, nParked=LOW?12:26;
+  const nTraffic=LOW?34:95, nParked=LOW?16:38;
   for(let i=0;i<nTraffic;i++) spawnTrafficCar();
   // parked cars along the curbs
   const ptypes=['sedan','sports','suv','pickup','taxi'];
@@ -4846,6 +4863,13 @@ function spawnTraffic(){
     const z=offset+j2*CELL + rand(-20,20);
     const v=makeVehicle(type,x,z,{stationary:true});
     v.rotation.y=Math.random()<0.5?0:Math.PI; G.vehicles.push(v);
+  }
+  // a few mounted-turret technicals scattered for the player to find
+  for(let i=0;i<(LOW?2:4);i++){
+    const i2=randi(1,GRID-2), j2=randi(1,GRID-2);
+    const x=offset+i2*CELL+(Math.random()<0.5?-CELL/2-5:CELL/2+5), z=offset+j2*CELL+rand(-15,15);
+    const v=makeVehicle('technical',x,z,{stationary:true}); v.rotation.y=Math.random()*TAU; G.vehicles.push(v);
+    G.markers.push({x,z,type:'technical'});
   }
 }
 // One lane-following traffic car on a random road, headed along an axis.
@@ -5056,7 +5080,7 @@ function randWaypoint(){
   return {x:offset+i*CELL+rand(-25,25), z:offset+j*CELL+rand(-25,25)};
 }
 function spawnPeds(){
-  const n = LOW?30:70;
+  const n = LOW?42:120;
   for(let i=0;i<n;i++){
     const wp=randWaypoint();
     let gang=null;
@@ -5198,7 +5222,8 @@ function addWanted(amount){
 }
 function clearWanted(){ G.wanted=0; G.police.forEach(p=>{G.scene.remove(p);}); G.police.length=0; G.audio.stopSiren();
   G.copsOnFoot.forEach(c=>G.scene.remove(c.mesh)); G.copsOnFoot.length=0;
-  if(G.heli){ G.scene.remove(G.heli.group); G.heli=null; } }
+  if(G.heli){ G.scene.remove(G.heli.group); G.heli=null; }
+  if(G.jets){ G.jets.forEach(j=>G.scene.remove(j.group)); G.jets.length=0; } }
 
 function ensurePolice(){
   const want=Math.ceil(G.wanted);
@@ -5393,7 +5418,30 @@ function anyNpcSees(){
 }
 
 // =================== WEAPONS FIRING ===================
+// Player-operated turret on the technical: auto-targets the nearest threat in
+// front, otherwise fires straight ahead. Rapid-fire while you hold FIRE.
+function fireTurret(){
+  const v=G.player.inVehicle; if(!v||!v.userData.technical) return;
+  const ud=v.userData; if(ud.turretCD>0) return; ud.turretCD=0.1;
+  const ry=v.rotation.y; const fwd={x:-Math.sin(ry),z:-Math.cos(ry)};
+  const o=new THREE.Vector3(v.position.x,1.9,v.position.z);
+  // pick nearest enemy within a forward arc
+  let best=null,bd=80;
+  const consider=(pos)=>{ const ddx=pos.x-o.x,ddz=pos.z-o.z,d=Math.hypot(ddx,ddz); if(d>bd)return; if((ddx*fwd.x+ddz*fwd.z)/d<0.2)return; bd=d; best=pos; };
+  G.police.forEach(pc=>{ if(!pc.userData.burned) consider(pc.position); });
+  G.copsOnFoot.forEach(c=>consider(c.mesh.position));
+  G.peds.forEach(pe=>{ if(!pe.dead && (pe.state==='combat'||pe.hostile)) consider(pe.mesh.position); });
+  let dir;
+  if(best){ dir=new THREE.Vector3(best.x-o.x,1.2-o.y,best.z-o.z).normalize(); }
+  else dir=new THREE.Vector3(fwd.x,0,fwd.z).normalize();
+  if(ud.turretMount){ const ta=Math.atan2(-dir.x,-dir.z)-ry; ud.turretMount.rotation.y=lerp2angle(ud.turretMount.rotation.y,ta,0.4); }
+  hitscan(o,dir,80,16); spawnTracer(o,dir);
+  G.audio.gunshot('rifle'); G.particles.burst(o.x+dir.x*1.5,o.y,o.z+dir.z*1.5,'muzzle',3);
+  if(!G.firedInPublic){ addWanted(1); G.firedInPublic=true; setTimeout(()=>G.firedInPublic=false,3000); }
+}
 function firePrimary(){
+  // in a technical, FIRE drives the mounted turret (handled in updateVehiclePlayer)
+  if(G.player.inVehicle && G.player.inVehicle.userData.technical){ fireTurret(); return; }
   const w=WEAPONS[G.player.weapon]; const wd=G.player.weapons[G.player.weapon];
   if(G.player.fireCD>0) return;
   if(w.melee){ meleePunch(); G.player.fireCD=w.cd; return; }
@@ -5451,7 +5499,7 @@ function hitscan(origin,dir,range,dmg){
   // check peds, cops, police cars & vehicles — nearest along ray
   let bestT=range, hitPed=null, hitVeh=null, hitCop=null, shieldBlock=false;
   const ro=origin, rd=dir;
-  G.peds.forEach(pe=>{ if(pe.dead) return; const t=raySphere(ro,rd,pe.mesh.position,1.2); if(t>0&&t<bestT){bestT=t;hitPed=pe;hitVeh=null;hitCop=null;} });
+  G.peds.forEach(pe=>{ if(pe.dead||pe.ally) return; const t=raySphere(ro,rd,pe.mesh.position,1.2); if(t>0&&t<bestT){bestT=t;hitPed=pe;hitVeh=null;hitCop=null;} });
   G.copsOnFoot.forEach(c=>{ const t=raySphere(ro,rd,c.mesh.position,0.9); if(t>0&&t<bestT){bestT=t;hitCop=c;hitPed=null;hitVeh=null;} });
   G.police.concat(G.vehicles).forEach(v=>{ if(v.userData.burned)return; const t=raySphere(ro,rd,v.position,2); if(t>0&&t<bestT){bestT=t;hitVeh=v;hitPed=null;hitCop=null;} });
   const hp=new THREE.Vector3(ro.x+rd.x*bestT,ro.y+rd.y*bestT,ro.z+rd.z*bestT);
@@ -5748,6 +5796,7 @@ window.addEventListener('keydown',e=>{
   if(k==='e') tryInteract();
   if(k==='g'){ throwProjectile(WEAPONS[G.player.weapon].throw?G.player.weapon:'grenade'); }
   if(k==='l') toggleLock();
+  if(k==='b'){ if(!recruitPed()) robPed(); } // B: recruit nearby ped (or rob if none recruitable)
   if(k==='q' && !G.wheelOpen) openWheel();
   if(k==='enter' && G.mission&&G.mission.state==='briefing') startMission(G.mission.def);
 });
@@ -5793,6 +5842,8 @@ function tryInteract(){
   for(const s of G.shops){ if(Math.hypot(s.x-p.x,s.z-p.z)<4){ openShop(s); return; } }
   // safehouse save
   for(const s of G.safehouses){ if(Math.hypot(s.x-p.x,s.z-p.z)<5){ saveGame(); return; } }
+  // otherwise: rob the nearest pedestrian
+  if(!G.player.inVehicle && robPed()) return;
 }
 function toggleLock(){
   if(G.lockTarget){ G.lockTarget=null; return; }
@@ -5880,6 +5931,7 @@ function setupTouchUI(){
   // tap-style buttons
   tapBtn('btnEnter',  ()=>tryEnterExit());
   tapBtn('btnAction', ()=>tryInteract());
+  tapBtn('btnRecruit', ()=>{ if(!recruitPed()) robPed(); });
   tapBtn('btnWeapon', ()=>toggleWeaponMenu());
   tapBtn('btnReload', ()=>reload());
   tapBtn('btnCam',    ()=>cycleCamera());
@@ -6128,6 +6180,8 @@ function updateVehiclePlayer(dt){
   // moto lean
   if(ud.vtype.moto){ v.rotation.z=lerp(v.rotation.z,-steer*0.26,0.1); }
   // engine + speed HUD
+  if(ud.turretCD>0) ud.turretCD-=dt;
+  if(ud.technical && G.mouse.down) fireTurret();   // hold FIRE to use the mounted gun
   G.audio.setEngine(ud.speed,maxS);
   UI.speed.textContent=Math.round(Math.abs(ud.speed)*2.23)+' MPH';
   // pay-n-spray
@@ -6214,31 +6268,34 @@ function updatePolice(dt){
   const pv = G.player.inVehicle ?
     {x:-Math.sin(G.player.inVehicle.rotation.y)*G.player.inVehicle.userData.speed, z:-Math.cos(G.player.inVehicle.rotation.y)*G.player.inVehicle.userData.speed}
     : {x:G.player.vx||0,z:G.player.vz||0};
-  G.police.forEach(v=>{
+  const speedHint=Math.hypot(pv.x,pv.z)||1;
+  G.police.forEach((v,idx)=>{
     const ud=v.userData;
     updateVehicleFire(v,dt);
     if(ud.burned) return;
     if(ud.lb1){ const f=Math.floor(performance.now()/180)%2; ud.lb1.material.emissiveIntensity=f?3:0.1; ud.lb2.material.emissiveIntensity=f?0.1:3; }
 
     const dx=p.x-v.position.x, dz=p.z-v.position.z; const dist=Math.hypot(dx,dz);
-    // predictive intercept: aim where the player WILL be
-    const lead=clamp(dist/Math.max(8,ud.maxSpeed),0,1.5);
-    let aimX=p.x+pv.x*lead, aimZ=p.z+pv.z*lead;
-    // flanking: when close, fan out to a point offset around the player so cars surround
-    if(dist<35){
-      const ang=Math.atan2(dz,dx)+ud.flank;
-      aimX=p.x-Math.cos(ang)*14; aimZ=p.z-Math.sin(ang)*14;
+    let aimX,aimZ,desired;
+    if(G.player.inVehicle){
+      // TEAMWORK: ~1 in 3 cuts ahead to block the player's path; the rest ram the
+      // predicted position. All drive flat-out to box you in.
+      const role=idx%3;
+      if(role===2){ aimX=p.x+(pv.x/speedHint)*26; aimZ=p.z+(pv.z/speedHint)*26; }   // blocker ahead
+      else { const lead=clamp(dist/Math.max(8,ud.maxSpeed),0,2.2); aimX=p.x+pv.x*lead; aimZ=p.z+pv.z*lead; }
+      desired=ud.maxSpeed*(role===2?1.0:1.05);
+    } else {
+      // on foot: surround & close in
+      const lead=clamp(dist/Math.max(8,ud.maxSpeed),0,1.5);
+      aimX=p.x+pv.x*lead; aimZ=p.z+pv.z*lead;
+      if(dist<35){ const ang=Math.atan2(dz,dx)+ud.flank; aimX=p.x-Math.cos(ang)*14; aimZ=p.z-Math.sin(ang)*14; }
+      desired = dist<6?0:(dist<16?ud.maxSpeed*0.55:ud.maxSpeed*0.85);
     }
     const adx=aimX-v.position.x, adz=aimZ-v.position.z;
     const targetAng=Math.atan2(-adx,-adz);
     let da=targetAng - v.rotation.y; while(da>Math.PI)da-=TAU; while(da<-Math.PI)da+=TAU;
-    v.rotation.y+=clamp(da, -2.6*dt, 2.6*dt);
-
-    // speed: full chase far away, ram speed if lined up & player fleeing in car, ease near
-    let desired=ud.maxSpeed*0.85;
-    if(dist<6) desired = G.player.inVehicle ? ud.maxSpeed*0.9 : 0; // ram cars, stop to arrest peds
-    else if(dist<16) desired=ud.maxSpeed*0.55;
-    ud.speed=lerp(ud.speed,desired,0.06);
+    v.rotation.y+=clamp(da, -2.8*dt, 2.8*dt);
+    ud.speed=lerp(ud.speed,desired,0.07);
     const ry=v.rotation.y;
     const nx=v.position.x-Math.sin(ry)*ud.speed*dt, nz=v.position.z-Math.cos(ry)*ud.speed*dt;
     const col=collideCircle(nx,nz,2);
@@ -6248,8 +6305,13 @@ function updatePolice(dt){
     v.rotation.z=lerp(v.rotation.z,-clamp(da,-1,1)*0.12,0.1); // lean into turns
     ud.wheels.forEach(w=>w.rotation.x+=ud.speed*dt);
 
-    // ram damage to player vehicle
-    if(G.player.inVehicle && dist<3 && Math.abs(ud.speed)>10){ damageVehicle(G.player.inVehicle,6*dt*10); }
+    // RAM the player's car: shove it, damage it, jolt the player
+    if(G.player.inVehicle && dist<3.6){
+      const pc=G.player.inVehicle, n=Math.hypot(dx,dz)||1;
+      pc.position.x+=(dx/n)*0.6; pc.position.z+=(dz/n)*0.6;     // knock the player's car
+      if(Math.abs(ud.speed)>8){ damageVehicle(pc,(Math.abs(ud.speed))*0.25); damagePlayer(Math.abs(ud.speed)*0.05);
+        G.particles.burst((v.position.x+pc.position.x)/2,1,(v.position.z+pc.position.z)/2,'spark',5); ud.speed*=0.6; }
+    }
     // arrest on foot
     if(dist<1.6 && !G.player.inVehicle){ ud.arrestTimer+=dt; if(ud.arrestTimer>3) arrestPlayer(); }
     else ud.arrestTimer=0;
@@ -6346,8 +6408,14 @@ function aiTryShoot(fromPos, range, baseDmg, accuracy, sound){
   G.audio.gunshot(sound||'pistol');
   G.particles.burst(fromPos.x,1.4,fromPos.z,'muzzle',3);
   const falloff=clamp(1-d/range,0.1,1);      // closer = more accurate
-  if(Math.random()<accuracy*falloff){ damagePlayer(baseDmg*(0.6+0.4*falloff)); }
+  if(Math.random()<accuracy*falloff){ bulletHitPlayer(baseDmg*(0.6+0.4*falloff)); }
   return true;
+}
+// A car stops nearly all bullets — in a vehicle you're safe from gunfire (but
+// not from rams or explosions). On foot, full damage.
+function bulletHitPlayer(dmg){
+  if(G.player.inVehicle){ dmg*=0.06; if(G.player.inVehicle.userData) damageVehicle(G.player.inVehicle,dmg*2); }
+  damagePlayer(dmg);
 }
 // Police helicopter — 3+ stars. Has health, can be SHOT DOWN (crash physics +
 // blast), and at 5 stars fires rocket artillery at the player.
@@ -6388,7 +6456,7 @@ function updateHelicopter(dt,p){
   const hpos={x:h.group.position.x,z:h.group.position.z};
   // 4+ stars: minigun strafe
   if(want>=4){ h.fireCD-=dt; if(h.fireCD<=0){ h.fireCD=0.4;
-    if(hasLOS(hpos,p)){ if(Math.random()<0.5) damagePlayer(rand(4,9)); G.audio.gunshot('rifle');
+    if(hasLOS(hpos,p)){ if(Math.random()<0.5) bulletHitPlayer(rand(4,9)); G.audio.gunshot('rifle');
       G.particles.burst(p.x+rand(-2,2),0.3,p.z+rand(-2,2),'spark',4); } } }
   // 5 stars: rocket artillery
   if(want>=5){ h.rocketCD-=dt; if(h.rocketCD<=0 && hasLOS(hpos,p)){ h.rocketCD=rand(2.5,4.5);
@@ -6404,6 +6472,46 @@ function damageHeli(dmg){
     bigMsg('HELICOPTER DOWN','#ff8800'); G.money+=250;
   }
 }
+// ---- F-16 Falcon jets: high-speed strafing runs at 5 stars ----
+function spawnJet(){
+  const g=new THREE.Group();
+  const mat=new THREE.MeshStandardMaterial({color:0x4a505a,metalness:0.6,roughness:0.4});
+  const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.3,7,8),mat); fus.rotation.x=Math.PI/2; g.add(fus);
+  const nose=new THREE.Mesh(new THREE.ConeGeometry(0.5,1.6,8),mat); nose.rotation.x=-Math.PI/2; nose.position.z=4; g.add(nose);
+  const wing=new THREE.Mesh(new THREE.BoxGeometry(7,0.15,2.2),mat); wing.position.z=-0.5; g.add(wing);
+  const tailW=new THREE.Mesh(new THREE.BoxGeometry(2.6,0.12,1),mat); tailW.position.z=-3; g.add(tailW);
+  const fin=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.4,1.4),mat); fin.position.set(0,0.7,-3); g.add(fin);
+  const flame=new THREE.Mesh(new THREE.ConeGeometry(0.35,1.4,8),new THREE.MeshBasicMaterial({color:0xffaa33})); flame.rotation.x=Math.PI/2; flame.position.z=-4; g.add(flame);
+  g.traverse(o=>{ if(o.isMesh) o.castShadow=!LOW; });
+  // start far on a random side, fly over the player
+  const p=G.player.mesh.position; const a=rand(0,TAU);
+  const sx=p.x+Math.cos(a)*420, sz=p.z+Math.sin(a)*420;
+  const dir=new THREE.Vector3(p.x-sx,0,p.z-sz).normalize();
+  g.position.set(sx,55,sz); g.rotation.y=Math.atan2(dir.x,dir.z);
+  G.scene.add(g);
+  G.jets=G.jets||[];
+  G.jets.push({group:g,dir,speed:90,strafed:false,life:12});
+}
+function updateJets(dt){
+  G.jets=G.jets||[];
+  const want=Math.ceil(G.wanted);
+  G.jetCD=(G.jetCD||0)-dt;
+  if(want>=5 && G.jets.length<2 && G.jetCD<=0){ spawnJet(); G.jetCD=rand(6,10); }
+  const p=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
+  for(let i=G.jets.length-1;i>=0;i--){ const j=G.jets[i]; j.life-=dt;
+    j.group.position.x+=j.dir.x*j.speed*dt; j.group.position.z+=j.dir.z*j.speed*dt;
+    G.particles.spawn(j.group.position.x-j.dir.x*4,j.group.position.y,j.group.position.z-j.dir.z*4,'smoke');
+    const d=Math.hypot(j.group.position.x-p.x,j.group.position.z-p.z);
+    // bombing run: drop ordnance as it passes near the player
+    if(!j.strafed && d<70){ j.strafed=true;
+      const o=new THREE.Vector3(j.group.position.x,j.group.position.y-2,j.group.position.z);
+      const d2=new THREE.Vector3(p.x-o.x,-2,p.z-o.z).normalize(); spawnRocket(o,d2); spawnRocket(o.clone(),d2.clone());
+      G.audio.gunshot('rifle');
+    }
+    if(j.life<=0){ G.scene.remove(j.group); G.jets.splice(i,1); }
+  }
+  if(want<5){ for(let i=G.jets.length-1;i>=0;i--){ if(G.jets[i].life>3) G.jets[i].life=3; } }
+}
 function spawnHelicopter(){
   const g=new THREE.Group();
   const body=new THREE.Mesh(new THREE.BoxGeometry(2.4,1.6,4.5),new THREE.MeshStandardMaterial({color:0x14181c,roughness:0.5,metalness:0.4}));
@@ -6416,6 +6524,11 @@ function spawnHelicopter(){
   rotor.position.y=1.1; g.add(rotor);
   const skidL=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.15,3),new THREE.MeshStandardMaterial({color:0x222222})); skidL.position.set(-0.9,-1,0); g.add(skidL);
   const skidR=skidL.clone(); skidR.position.x=0.9; g.add(skidR);
+  // Apache-style stub wings with missile pods + chin gun
+  const wingMat=new THREE.MeshStandardMaterial({color:0x2b3326,roughness:0.8});
+  const wing=new THREE.Mesh(new THREE.BoxGeometry(4.4,0.15,0.7),wingMat); wing.position.set(0,-0.2,0.4); g.add(wing);
+  [-1.7,1.7].forEach(wx=>{ const pod=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.4,1.4),new THREE.MeshStandardMaterial({color:0x14140f})); pod.position.set(wx,-0.35,0.4); g.add(pod); });
+  const chin=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,1,6),new THREE.MeshStandardMaterial({color:0x111111})); chin.rotation.x=Math.PI/2; chin.position.set(0,-0.7,1.8); g.add(chin);
   const spot=new THREE.SpotLight(0xffffff,3,80,0.35,0.5,1); spot.position.set(0,-0.5,0);
   g.add(spot); g.add(spot.target);
   g.position.set(G.player.mesh.position.x,60,G.player.mesh.position.z);
@@ -6438,7 +6551,7 @@ function updatePeds(dt,t){
   G.peds.forEach((pe,i)=>{
     if(pe.dead) return;
     const d=Math.hypot(pe.mesh.position.x-px,pe.mesh.position.z-pz);
-    if(d>200){ // respawn at edge
+    if(d>200 && !pe.ally){ // respawn distant civilians (keep allies)
       const wp=randWaypointNear(px,pz,140); pe.mesh.position.set(wp.x,0,wp.z); pe.state='wander'; pe.target=randWaypoint(); return;
     }
     pe.phase+=dt;
@@ -6475,6 +6588,14 @@ function updatePeds(dt,t){
       // face the player while fighting
       pe.mesh.rotation.y = -Math.atan2(pz-pe.mesh.position.z,px-pe.mesh.position.x)+Math.PI/2;
       if(d>70) pe.state='wander'; // give up if you flee far
+    } else if(pe.state==='ally'){
+      // recruited crew: shoot enemies, otherwise stay near you
+      pe.shootCD=(pe.shootCD||1)-dt;
+      let shot=false;
+      if(pe.shootCD<=0){ shot=allyShoot(pe); pe.shootCD = shot?rand(0.6,1.2):0.5; }
+      if(d>9){ tx=px; tz=pz; spd=pe.speed*(d>30?2.2:1.4); }   // catch up to you
+      else if(!shot){ moving=false; }
+      if(d>120){ const wp=randWaypointNear(px,pz,8); pe.mesh.position.set(wp.x,0,wp.z); } // don't get left behind
     }
     if(moving && tx!==undefined){
       const ang=Math.atan2(tz-pe.mesh.position.z,tx-pe.mesh.position.x);
@@ -6493,6 +6614,44 @@ function updatePeds(dt,t){
 }
 function randWaypointNear(px,pz,r){
   const a=rand(0,TAU); return {x:px+Math.cos(a)*r,z:pz+Math.sin(a)*r};
+}
+// ---- Rob / recruit pedestrians ----
+function nearestPed(maxd,filter){
+  let best=null,bd=maxd; const p=G.player.mesh.position;
+  G.peds.forEach(pe=>{ if(pe.dead) return; if(filter&&!filter(pe)) return; const d=Math.hypot(pe.mesh.position.x-p.x,pe.mesh.position.z-p.z); if(d<bd){bd=d;best=pe;} });
+  return best;
+}
+function robPed(){
+  const pe=nearestPed(2.5, p=>!p.ally); if(!pe) return false;
+  const loot=randi(20,140); G.money+=loot; G.audio.cash();
+  toast('Robbed pedestrian +$'+loot); bigMsg('+$'+loot,'#33ff33');
+  pe.state='flee'; pe.fleeDir=Math.atan2(pe.mesh.position.z-G.player.mesh.position.z,pe.mesh.position.x-G.player.mesh.position.x);
+  addWanted(0.4); return true;
+}
+function recruitPed(){
+  const allies=G.peds.filter(p=>p.ally&&!p.dead).length;
+  if(allies>=5){ toast('Crew is full (5)'); return false; }
+  const pe=nearestPed(4, p=>!p.ally && p.state!=='combat'); if(!pe){ return false; }
+  pe.ally=true; pe.state='ally'; pe.hostile=false; pe.hp=Math.max(pe.hp,60); pe.shootCD=rand(0.3,1);
+  // give them a visible weapon + a green marker
+  const gun=makeWeaponMesh('pistol'); if(gun){ gun.position.set(0.18,1.5,-0.4); gun.rotation.y=Math.PI; pe.mesh.add(gun); }
+  const mk=new THREE.Mesh(new THREE.ConeGeometry(0.25,0.5,6),new THREE.MeshStandardMaterial({color:0x33ff66,emissive:0x33ff66}));
+  mk.position.y=3; mk.rotation.x=Math.PI; pe.mesh.add(mk);
+  toast('Recruited a crew member ('+(allies+1)+'/5)'); return true;
+}
+// An ally shoots the nearest enemy (police, cops, hostile peds)
+function allyShoot(pe){
+  let best=null,bd=42,bt=null;
+  G.police.forEach(v=>{ if(v.userData.burned)return; const d=Math.hypot(v.position.x-pe.mesh.position.x,v.position.z-pe.mesh.position.z); if(d<bd){bd=d;best=v.position;bt={veh:v};} });
+  G.copsOnFoot.forEach(c=>{ const d=Math.hypot(c.mesh.position.x-pe.mesh.position.x,c.mesh.position.z-pe.mesh.position.z); if(d<bd){bd=d;best=c.mesh.position;bt={cop:c};} });
+  G.peds.forEach(o=>{ if(o.dead||o.ally) return; if(o.state!=='combat'&&!o.hostile) return; const d=Math.hypot(o.mesh.position.x-pe.mesh.position.x,o.mesh.position.z-pe.mesh.position.z); if(d<bd){bd=d;best=o.mesh.position;bt={ped:o};} });
+  if(!best||!hasLOS(pe.mesh.position,best)) return false;
+  pe.mesh.rotation.y=-Math.atan2(best.z-pe.mesh.position.z,best.x-pe.mesh.position.x)+Math.PI/2;
+  G.audio.gunshot('pistol'); G.particles.burst(pe.mesh.position.x,1.4,pe.mesh.position.z,'muzzle',2);
+  const o=new THREE.Vector3(pe.mesh.position.x,1.5,pe.mesh.position.z);
+  const dir=new THREE.Vector3(best.x-o.x,0,best.z-o.z).normalize(); spawnTracer(o,dir);
+  if(Math.random()<0.5){ if(bt.veh) damageVehicle(bt.veh,10); else if(bt.cop){ bt.cop.hp-=12; if(bt.cop.hp<=0) killCop(bt.cop);} else if(bt.ped){ bt.ped.hp-=12; if(bt.ped.hp<=0) killPed(bt.ped);} }
+  return true;
 }
 
 // =================== BULLETS / PROJECTILES ===================
@@ -6724,6 +6883,8 @@ function loop(now){
     updateMission(sdt);
     updateWanted(sdt);
     updateDayNight(sdt);
+    updateCozyLights();
+    updateJets(sdt);
     updateTrafficLights(sdt);
     updateWater(t);
     updateFountain();
@@ -6809,7 +6970,38 @@ function initThree(){
   G.sunSprite.scale.set(80,80,1); G.scene.add(G.sunSprite);
 
   G.particles=new ParticleSystem(G.scene,LOW?160:400);
+
+  // ---- Cozy night lighting: a pool of warm point lights that drift to nearby
+  // intersections after dark, plus headlights on the car you're driving ----
+  G.cozyLights=[];
+  const nLights=LOW?4:14;
+  for(let i=0;i<nLights;i++){ const pl=new THREE.PointLight(0xffb265,0,30,1.7); pl.position.set(0,6,0); G.scene.add(pl); G.cozyLights.push(pl); }
+  G.headlight=new THREE.SpotLight(0xfff3d0,0,55,0.5,0.4,1); G.headlight.position.set(0,2,0);
+  G.scene.add(G.headlight); G.scene.add(G.headlight.target);
+  G.toneExposure=1.0;
+
   window.addEventListener('resize',()=>{ G.camera.aspect=innerWidth/innerHeight; G.camera.updateProjectionMatrix(); G.renderer.setSize(innerWidth,innerHeight); });
+}
+function updateCozyLights(){
+  if(!G.cozyLights) return;
+  const hour=G.time/3600; const nightF=(hour<6.5||hour>18.5)?1:0;
+  const px=G.player.mesh.position.x, pz=G.player.mesh.position.z;
+  const half=G.CITY/2;
+  G.cozyLights.forEach((pl,i)=>{
+    const ang=i/G.cozyLights.length*TAU; const r=18+(i%3)*16;
+    const tx=px+Math.cos(ang)*r, tz=pz+Math.sin(ang)*r;
+    const gx=Math.round((tx+half)/CELL)*CELL-half+9, gz=Math.round((tz+half)/CELL)*CELL-half+9;
+    pl.position.x=lerp(pl.position.x,gx,0.08); pl.position.z=lerp(pl.position.z,gz,0.08);
+    pl.intensity=lerp(pl.intensity, nightF*1.5, 0.04);
+  });
+  // headlights on the driven car at night
+  const hl=G.headlight;
+  if(G.player.inVehicle && nightF>0.5){
+    const v=G.player.inVehicle, ry=v.rotation.y, fx=-Math.sin(ry), fz=-Math.cos(ry);
+    hl.position.set(v.position.x+fx*2, 1.2, v.position.z+fz*2);
+    hl.target.position.set(v.position.x+fx*30, 0, v.position.z+fz*30); hl.target.updateMatrixWorld();
+    hl.intensity=lerp(hl.intensity,2.2,0.2);
+  } else hl.intensity=lerp(hl.intensity,0,0.1);
 }
 
 // Loading orchestration
