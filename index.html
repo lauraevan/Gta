@@ -203,7 +203,8 @@
 <div id="shopPanel" class="panel">
   <h2 id="shopTitle">AMMU-NATION</h2>
   <div id="shopItems"></div>
-  <div class="hint">Click to buy &nbsp;•&nbsp; Press E or ESC to exit</div>
+  <div class="item" style="background:#7a1f1f;border-color:#c44;justify-content:center;width:200px" onclick="closeShop()">✕ EXIT</div>
+  <div class="hint">Click to buy &nbsp;•&nbsp; Tap EXIT / press E to leave</div>
 </div>
 
 <!-- Pause / map -->
@@ -4254,7 +4255,7 @@ function* generateWorld(){
   yield 'Laying roads…';
 
   // Ground base
-  const groundGeo=new THREE.PlaneGeometry(G.CITY+400,G.CITY+400);
+  const groundGeo=new THREE.PlaneGeometry(G.CITY+600,G.CITY+600);
   const ground=new THREE.Mesh(groundGeo,new THREE.MeshStandardMaterial({color:0x101010,roughness:1}));
   ground.rotation.x=-Math.PI/2; ground.position.y=-0.05; ground.receiveShadow=true; G.scene.add(ground);
 
@@ -4368,6 +4369,9 @@ function* generateWorld(){
 
   yield 'Stocking the stores…';
   setupStores(offset);
+
+  yield 'Building the airfield…';
+  makeAirfield();
 
   yield 'Done';
 }
@@ -4605,14 +4609,154 @@ function makeHarbor(offset,zedge){
     const dx=offset+i*CELL*4;
     const dock=new THREE.Mesh(new THREE.BoxGeometry(40,1,30),new THREE.MeshStandardMaterial({color:0x554433}));
     dock.position.set(dx,0.5,z+5); dock.receiveShadow=true; G.scene.add(dock);
-    // ship
-    const ship=new THREE.Group();
-    const hull=new THREE.Mesh(new THREE.BoxGeometry(30,6,12),new THREE.MeshStandardMaterial({color:0x554b3a}));
-    hull.position.y=3; ship.add(hull);
-    const cabin=new THREE.Mesh(new THREE.BoxGeometry(10,6,8),new THREE.MeshStandardMaterial({color:0xcccccc}));
-    cabin.position.set(-8,9,0); ship.add(cabin);
-    ship.position.set(dx,0,z-30); G.scene.add(ship);
   }
+  // Navy DESTROYERS patrolling the harbour (some have CRAM point-defence)
+  G.destroyers=[];
+  const dpos=[offset+1*CELL, offset+6*CELL, offset+10*CELL];
+  dpos.forEach((dx,i)=>{ makeDestroyer(dx, z-50, i===1); });
+}
+function makeDestroyer(x,z,cram){
+  const g=new THREE.Group();
+  const gray=new THREE.MeshStandardMaterial({color:0x4a525a,metalness:0.4,roughness:0.6});
+  const hull=new THREE.Mesh(new THREE.BoxGeometry(10,5,44),gray); hull.position.y=2.5; g.add(hull);
+  const bow=new THREE.Mesh(new THREE.ConeGeometry(5,8,4),gray); bow.rotation.x=-Math.PI/2; bow.rotation.y=Math.PI/4; bow.scale.set(1,0.5,1); bow.position.set(0,2.5,24); g.add(bow);
+  const sup=new THREE.Mesh(new THREE.BoxGeometry(7,7,14),new THREE.MeshStandardMaterial({color:0x5a626a})); sup.position.set(0,8.5,-2); g.add(sup);
+  const mast=new THREE.Mesh(new THREE.BoxGeometry(0.5,8,0.5),gray); mast.position.set(0,15,-2); g.add(mast);
+  // forward gun turret
+  const turret=new THREE.Group(); turret.position.set(0,5.5,14);
+  const tb=new THREE.Mesh(new THREE.BoxGeometry(3,2,4),gray); turret.add(tb);
+  const barrel=new THREE.Mesh(new THREE.CylinderGeometry(0.25,0.25,5,8),new THREE.MeshStandardMaterial({color:0x222222})); barrel.rotation.x=Math.PI/2; barrel.position.z=3.5; turret.add(barrel);
+  g.add(turret);
+  let cramMesh=null;
+  if(cram){ cramMesh=new THREE.Group(); cramMesh.position.set(0,11,8);
+    const dome=new THREE.Mesh(new THREE.CylinderGeometry(1.2,1.4,1.2,10),new THREE.MeshStandardMaterial({color:0xeeeeee})); cramMesh.add(dome);
+    const gat=new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.3,2.4,8),new THREE.MeshStandardMaterial({color:0x333333})); gat.rotation.x=Math.PI/2; gat.position.set(0,0.4,1.4); cramMesh.add(gat);
+    g.add(cramMesh);
+  }
+  g.position.set(x,0,z); g.rotation.y=rand(-0.2,0.2); G.scene.add(g);
+  G.destroyers.push({group:g,turret,cram:!!cram,cramMesh,rocketCD:rand(2,5),cramCD:0,baseY:0,phase:Math.random()*9});
+}
+function updateDestroyers(dt){
+  if(!G.destroyers||!G.destroyers.length) return;
+  const p=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
+  const nearWater = p.z < -G.CITY/2+70;
+  G.destroyers.forEach(d=>{
+    d.phase+=dt; d.group.position.y=Math.sin(d.phase*0.6)*0.3;          // gentle bob
+    if(!nearWater || G.wanted<2) return;
+    const dx=p.x-d.group.position.x, dz=p.z-d.group.position.z, dist=Math.hypot(dx,dz);
+    // aim turret
+    if(d.turret){ const ta=Math.atan2(dx,dz); d.turret.rotation.y=lerp2angle(d.turret.rotation.y,ta,0.04); }
+    // main gun: rocket volleys
+    d.rocketCD-=dt;
+    if(d.rocketCD<=0 && dist<200){ d.rocketCD=rand(3,5);
+      fireSalvo({x:d.group.position.x,y:6,z:d.group.position.z}, p, d.cram?2:3, 0.5);
+    }
+    // CRAM point-defence: rapid bullets
+    if(d.cram){ d.cramCD-=dt; if(d.cramCD<=0 && dist<160){ d.cramCD=0.08;
+      if(hasLOS({x:d.group.position.x,z:d.group.position.z},p)){ if(Math.random()<0.18) bulletHitPlayer(rand(3,7)); }
+      if(Math.random()<0.4) G.audio.gunshot('smg');
+      if(d.cramMesh) d.cramMesh.rotation.y+=0.6;
+    } }
+  });
+}
+
+// =================== AIRFIELD & FLYABLE AIRCRAFT ===================
+function buildAircraft(type){
+  const g=new THREE.Group();
+  const grey=new THREE.MeshStandardMaterial({color:0x5a606a,metalness:0.5,roughness:0.45});
+  const dark=new THREE.MeshStandardMaterial({color:0x2b3036,metalness:0.4,roughness:0.6});
+  if(type==='heli'||type==='apache'){
+    const body=new THREE.Mesh(new THREE.BoxGeometry(2.4,1.6,4.5),type==='apache'?dark:grey); body.castShadow=!LOW; g.add(body);
+    const tail=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,3.5),dark); tail.position.set(0,0.3,-3.5); g.add(tail);
+    const rotor=new THREE.Group(); for(let i=0;i<2;i++){ const bl=new THREE.Mesh(new THREE.BoxGeometry(9,0.08,0.4),new THREE.MeshStandardMaterial({color:0x222222})); bl.rotation.y=i*Math.PI/2; rotor.add(bl); }
+    rotor.position.y=1.1; g.add(rotor); g.userData.rotor=rotor;
+    const skidL=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.15,3),dark); skidL.position.set(-0.9,-1,0); g.add(skidL);
+    const skidR=skidL.clone(); skidR.position.x=0.9; g.add(skidR);
+    if(type==='apache'){ const wing=new THREE.Mesh(new THREE.BoxGeometry(4.4,0.15,0.7),dark); wing.position.set(0,-0.2,0.4); g.add(wing);
+      [-1.7,1.7].forEach(wx=>{ const pod=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.4,1.4),new THREE.MeshStandardMaterial({color:0x14140f})); pod.position.set(wx,-0.35,0.4); g.add(pod); }); }
+    g.userData.heli=true;
+  } else {
+    // jets: f16 / f35
+    const mat = type==='f35'?new THREE.MeshStandardMaterial({color:0x3c4048,metalness:0.4,roughness:0.55}):grey;
+    const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.32,7,8),mat); fus.rotation.x=Math.PI/2; g.add(fus);
+    const nose=new THREE.Mesh(new THREE.ConeGeometry(0.5,1.6,8),mat); nose.rotation.x=-Math.PI/2; nose.position.z=4; g.add(nose);
+    const wing=new THREE.Mesh(new THREE.BoxGeometry(type==='f35'?7.5:7,0.16,type==='f35'?2.8:2.2),mat); wing.position.z=-0.5; g.add(wing);
+    const tailW=new THREE.Mesh(new THREE.BoxGeometry(2.6,0.12,1),mat); tailW.position.z=-3; g.add(tailW);
+    const fin=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.4,1.4),mat); fin.position.set(type==='f35'?0.5:0,0.7,-3); g.add(fin);
+    if(type==='f35'){ const fin2=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.4,1.4),mat); fin2.position.set(-0.5,0.7,-3); g.add(fin2); }
+    const flame=new THREE.Mesh(new THREE.ConeGeometry(0.34,1.4,8),new THREE.MeshBasicMaterial({color:0xffaa33})); flame.rotation.x=Math.PI/2; flame.position.z=-4; g.add(flame); g.userData.flame=flame;
+  }
+  g.traverse(o=>{ if(o.isMesh) o.castShadow=!LOW; });
+  return g;
+}
+function makeAirfield(){
+  const half=G.CITY/2;
+  const cx=half+140, cz=0;   // tarmac just east of the city
+  const tarmac=new THREE.Mesh(new THREE.BoxGeometry(180,0.4,180),new THREE.MeshStandardMaterial({color:0x3a3a40,roughness:0.9}));
+  tarmac.position.set(cx,0.05,cz); tarmac.receiveShadow=!LOW; G.scene.add(tarmac);
+  // runway stripes
+  for(let s=-80;s<80;s+=16){ const st=new THREE.Mesh(new THREE.BoxGeometry(2,0.02,8),new THREE.MeshStandardMaterial({color:0xeeeeee})); st.position.set(cx,0.28,cz+s); G.scene.add(st); }
+  // a couple of hangars
+  for(let h=-1;h<=1;h+=2){ const hangar=new THREE.Mesh(new THREE.BoxGeometry(34,16,30),new THREE.MeshStandardMaterial({color:0x6a6e74,metalness:0.3,roughness:0.7})); hangar.position.set(cx-70,8,cz+h*45); hangar.castShadow=!LOW; G.scene.add(hangar);
+    G.buildingAABBs.push({minX:cx-70-17,maxX:cx-70+17,minZ:cz+h*45-15,maxZ:cz+h*45+15,minY:0,maxY:16,mesh:hangar}); }
+  // parked, flyable aircraft
+  G.aircraftPark=[];
+  const fleet=[['heli',-50],['apache',-18],['f16',16],['f35',50]];
+  fleet.forEach(([type,oz])=>{ const grp=buildAircraft(type); grp.position.set(cx,(type==='heli'||type==='apache')?1.2:0.6,cz+oz); grp.rotation.y=Math.PI; G.scene.add(grp);
+    G.aircraftPark.push({group:grp,type,taken:false,x:cx,z:cz+oz}); });
+  G.markers.push({x:cx,z:cz,type:'airfield'});
+  G.airfield={x:cx,z:cz};
+}
+function enterAircraft(a){
+  a.taken=true;
+  G.player.inAircraft={obj:a, group:a.group, type:a.type, speed:0, vy:0, alt:a.group.position.y, climb:0, fireCD:0,
+    heli:(a.type==='heli'||a.type==='apache'), maxSpeed:(a.type==='f35'?80:(a.type==='f16'?70:34))};
+  G.player.mesh.visible=false;
+  showVehName(a.type.toUpperCase());
+  toast('Throttle: W/Up · Climb: SPACE/JUMP · Down: SHIFT · Fire: hold FIRE · Exit: F (land first)');
+}
+function exitAircraft(){
+  const ac=G.player.inAircraft; if(!ac) return;
+  if(ac.group.position.y>4){ toast('Land first! (descend)'); return; }
+  ac.obj.taken=false; ac.group.position.y=(ac.heli?1.2:0.6);
+  const gx=ac.group.position.x+Math.sin(ac.group.rotation.y)*4, gz=ac.group.position.z+Math.cos(ac.group.rotation.y)*4;
+  G.player.mesh.position.set(gx,0,gz); G.player.rotY=ac.group.rotation.y;
+  G.player.mesh.visible=true; G.player.inAircraft=null;
+}
+function updateAircraft(dt){
+  const ac=G.player.inAircraft; if(!ac) return; const g=ac.group;
+  let thr=0, yaw=0, climb=0;
+  if(keys['w']) thr+=1; if(keys['s']) thr-=1;
+  if(keys['a']) yaw+=1; if(keys['d']) yaw-=1;
+  if(keys[' ']) climb+=1; if(keys['shift']) climb-=1;
+  if(touch.move.active){ thr+=-touch.move.y; yaw+=-touch.move.x; }
+  // mobile: JUMP button → climb (keys[' ']), SPRINT toggle → descend (keys['shift'])
+  // throttle → speed
+  ac.speed=clamp(ac.speed+thr*ac.maxSpeed*0.8*dt, ac.heli?-ac.maxSpeed*0.5:0, ac.maxSpeed);
+  if(!ac.heli && ac.speed<14) ac.speed=lerp(ac.speed,16,0.04); // jets keep flying
+  ac.speed*= (thr<0?0.985:0.998);
+  g.rotation.y += yaw*1.4*dt;
+  // climb
+  ac.vy=lerp(ac.vy, climb*16, 0.1);
+  g.position.y=Math.max(ac.heli?0.6:6, g.position.y+ac.vy*dt);
+  // forward motion along heading
+  const fx=Math.sin(g.rotation.y), fz=Math.cos(g.rotation.y);
+  let nx=g.position.x+fx*ac.speed*dt, nz=g.position.z+fz*ac.speed*dt;
+  const lim=G.CITY/2+320; nx=clamp(nx,-lim,lim); nz=clamp(nz,-lim,lim);
+  g.position.x=nx; g.position.z=nz;
+  // bank/pitch visuals
+  g.rotation.z=lerp(g.rotation.z,-yaw*0.4,0.1);
+  g.rotation.x=lerp(g.rotation.x, ac.heli?(ac.speed/ac.maxSpeed)*0.2 : -climb*0.15,0.1);
+  if(g.userData.rotor) g.userData.rotor.rotation.y+=dt*30;
+  // weapons
+  ac.fireCD-=dt;
+  if(G.mouse.down && ac.fireCD<=0){ ac.fireCD=ac.heli?0.5:0.7;
+    const o=new THREE.Vector3(g.position.x+fx*3, g.position.y-0.3, g.position.z+fz*3);
+    const d=new THREE.Vector3(fx,-0.05,fz).normalize(); spawnRocket(o,d,{explosive:true}); G.audio.explosion();
+  }
+  G.audio.setEngine(Math.abs(ac.speed),ac.maxSpeed);
+  UI.speed.textContent=Math.round(Math.abs(ac.speed)*2.23)+' MPH  ·  ALT '+Math.round(g.position.y)+'m';
+  UI.speed.style.opacity=1;
 }
 
 function makeOverpass(){
@@ -5121,7 +5265,7 @@ function spawnPeds(){
   for(let i=0;i<n;i++){
     const wp=randWaypoint();
     // ~18% are roaming armed gang members (neutral until provoked)
-    const gang = (gangs.length && Math.random()<0.18) ? choice(gangs) : null;
+    const gang = (gangs.length && Math.random()<0.34) ? choice(gangs) : null;
     const pe=createPed(wp.x,wp.z,gang);
     if(gang && Math.random()<0.2){ pe.gangRpg=true; const r=makeWeaponMesh('rpg'); if(r){ r.position.set(0.2,1.6,-0.3); r.rotation.y=Math.PI; pe.mesh.add(r); } }
     G.peds.push(pe);
@@ -5148,9 +5292,9 @@ function collideCircle(x,z,r){
     nx=clamp(nx,I.ox-7,I.ox+7); nz=clamp(nz,I.oz-5,I.oz+5.4);
     return {x:nx,z:nz,hit:(nx!==x||nz!==z)};
   }
-  // world bounds
-  const lim=G.CITY/2+30;
-  nx=clamp(nx,-lim,lim); nz=clamp(nz,-lim,lim);
+  // world bounds (eastern edge extends to the airfield tarmac)
+  const lim=G.CITY/2+30, east=G.CITY/2+232;
+  nx=clamp(nx,-lim,east); nz=clamp(nz,-lim,lim);
   return {x:nx,z:nz,hit:(nx!==x||nz!==z)};
 }
 
@@ -5236,8 +5380,7 @@ function drawMinimap(){
     const p=tx(bx,bz); ctx.fillRect(p[0]-2,p[1]-2,4,4);
   }
   // markers
-  ctx.fillStyle='#ff44cc';
-  G.markers.forEach(mk=>{ if(Math.abs(mk.x-px)<110&&Math.abs(mk.z-pz)<110){ const p=tx(mk.x,mk.z); ctx.beginPath(); ctx.arc(p[0],p[1],3,0,TAU); ctx.fill(); }});
+  G.markers.forEach(mk=>{ if(Math.abs(mk.x-px)<110&&Math.abs(mk.z-pz)<110){ const p=tx(mk.x,mk.z); ctx.fillStyle=mk.type==='airfield'?'#33ddff':'#ff44cc'; ctx.beginPath(); ctx.arc(p[0],p[1],mk.type==='airfield'?4:3,0,TAU); ctx.fill(); }});
   // paySpray on map
   ctx.fillStyle='#44ff88';
   G.paySpray.forEach(s=>{ const p=tx(s.x,s.z); if(p[0]>-10&&p[0]<W+10){ctx.fillRect(p[0]-2,p[1]-2,4,4);} });
@@ -5328,10 +5471,11 @@ function spawnPoliceCar(){
   let type='sedan';
   if(want>=5){
     const r5=Math.random();
-    if(r5<0.28){ opts={tank:true,doubleCannon:true,military:true,color:0x3a4218,name:'Heavy Tank'}; type='suv'; }
-    else if(r5<0.45){ opts={tank:true,military:true,color:0x4b5320,name:'Tank'}; type='suv'; }
-    else if(r5<0.65){ opts={military:true,rockets:true,color:0x4b5320,name:'Rocket Truck'}; type='suv'; }
-    else if(r5<0.9){ opts={humvee:true,military:true,rockets:true,armored:true,color:0x55603a,name:'Humvee'}; type='suv'; } // anti-armor turret
+    if(r5<0.22){ opts={tank:true,abrams:true,doubleCannon:false,military:true,color:0x6b6a4a,name:'M1 Abrams'}; type='suv'; }
+    else if(r5<0.4){ opts={tank:true,doubleCannon:true,military:true,color:0x3a4218,name:'Heavy Tank'}; type='suv'; }
+    else if(r5<0.55){ opts={tank:true,military:true,color:0x4b5320,name:'Tank'}; type='suv'; }
+    else if(r5<0.72){ opts={military:true,rockets:true,color:0x4b5320,name:'Rocket Truck'}; type='suv'; }
+    else if(r5<0.92){ opts={humvee:true,military:true,rockets:true,armored:true,color:0x55603a,name:'Humvee'}; type='suv'; } // anti-armor turret
     else { opts={police:true,armored:true,color:0x1a1a1a,name:'Armored Police'}; type='suv'; }
   }
   else if(want>=4){ opts = Math.random()<0.3 ? {squad:true,armored:true,color:0x14181f,name:'Squad Truck'} : (Math.random()<0.5 ? {police:true,armored:true,color:0x1a1a1a,name:'Armored Police'} : {police:true,color:0x111111,name:'FBI'}); type=opts.squad?'bus':'suv'; }
@@ -5342,8 +5486,8 @@ function spawnPoliceCar(){
   v.userData.maxSpeed=v.userData.maxSpeed*0.58;   // police cars are a lot slower now
   v.userData.flank=rand(-1,1); // surround offset, radians around target
   v.userData.shootCD=rand(0.5,2);
-  v.userData.tank=!!opts.tank; v.userData.rockets=!!(opts.rockets||opts.tank); v.userData.doubleCannon=!!opts.doubleCannon;
-  if(opts.tank){ v.userData.health=opts.doubleCannon?420:300; v.userData.maxSpeed=opts.doubleCannon?10:12; }
+  v.userData.tank=!!opts.tank; v.userData.abrams=!!opts.abrams; v.userData.rockets=!!(opts.rockets||opts.tank); v.userData.doubleCannon=!!opts.doubleCannon;
+  if(opts.tank){ v.userData.health=opts.abrams?520:(opts.doubleCannon?420:300); v.userData.maxSpeed=opts.abrams?13:(opts.doubleCannon?10:12); }
   if(opts.armored){ v.userData.health=260; v.userData.armored=true; }
   if(opts.humvee){ v.userData.health=320; v.userData.maxSpeed=22; v.userData.humvee=true; }
   v.rotation.y=a+Math.PI;
@@ -5362,12 +5506,14 @@ function spawnPoliceCar(){
   }
   // tank turret + barrel(s)
   if(opts.tank){
-    const turret=new THREE.Mesh(new THREE.BoxGeometry(2.2,0.9,2.6),new THREE.MeshStandardMaterial({color:0x3a4218,roughness:0.8}));
-    turret.position.y=v.userData.H+0.5; v.add(turret); v.userData.turret=turret;
+    const flat=opts.abrams;
+    const turret=new THREE.Mesh(new THREE.BoxGeometry(opts.abrams?2.6:2.2,opts.abrams?0.7:0.9,opts.abrams?3.2:2.6),new THREE.MeshStandardMaterial({color:opts.abrams?0x6b6a4a:0x3a4218,roughness:0.85}));
+    turret.position.y=v.userData.H+(opts.abrams?0.4:0.5); v.add(turret); v.userData.turret=turret;
     const barrelMat=new THREE.MeshStandardMaterial({color:0x222222});
+    const len=opts.abrams?4.6:3.2;
     const offsets= opts.doubleCannon ? [-0.4,0.4] : [0];
-    offsets.forEach(bx=>{ const barrel=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,3.2,8),barrelMat);
-      barrel.rotation.x=Math.PI/2; barrel.position.set(bx,0,-1.8); turret.add(barrel); });
+    offsets.forEach(bx=>{ const barrel=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,len,8),barrelMat);
+      barrel.rotation.x=Math.PI/2; barrel.position.set(bx,0,-len*0.55); turret.add(barrel); });
   }
   G.police.push(v);
 }
@@ -5394,7 +5540,7 @@ function createExplosion(x,y,z,radius,dmg){
   G.shake=Math.min(1.2,(G.shake||0)+Math.max(0,1-camd/60)*0.8);
   // damage entities
   const p=G.player.mesh.position; const pd=Math.hypot(p.x-x,p.z-z);
-  if(pd<radius){ damagePlayer(dmg*(1-pd/radius)); }
+  if(pd<radius){ damagePlayer(dmg*(1-pd/radius)*(G.player.inVehicle?0.45:0.8)); }   // cars/armour soak blasts; never one-shot
   G.peds.forEach(pe=>{ if(!pe.dead){ const d=Math.hypot(pe.mesh.position.x-x,pe.mesh.position.z-z); if(d<radius){ pe.hp-=dmg; pe.state='panic'; pe.pauseT=0.5; if(pe.hp<=0) killPed(pe); }}});
   G.vehicles.concat(G.police).forEach(v=>{ const d=Math.hypot(v.position.x-x,v.position.z-z); if(d<radius&&!v.userData.burned){ damageVehicle(v,dmg); }});
   // explosions ignore riot shields
@@ -5536,10 +5682,27 @@ function fireMissileRack(){
   spawnRocket(o,dir,{explosive:Math.random()<0.5}); G.audio.explosion();
   if(!G.firedInPublic){ addWanted(1); G.firedInPublic=true; setTimeout(()=>G.firedInPublic=false,3000); }
 }
+// Tank main gun (also Abrams): fires a powerful explosive shell at the nearest threat
+function fireTankCannon(){
+  const v=G.player.inVehicle; if(!v||!(v.userData.tank||v.userData.abrams)) return;
+  const ud=v.userData; if(ud.tankCD>0) return; ud.tankCD = ud.abrams?2.2:1.6;
+  const ry=v.rotation.y; const fwd={x:-Math.sin(ry),z:-Math.cos(ry)};
+  let best=null,bd=130;
+  const consider=(pos)=>{ const d=Math.hypot(pos.x-v.position.x,pos.z-v.position.z); if(d>bd||d<5)return; bd=d; best=pos; };
+  G.police.forEach(pc=>{ if(pc!==v && !pc.userData.burned) consider(pc.position); });
+  G.copsOnFoot.forEach(c=>consider(c.mesh.position));
+  const o=new THREE.Vector3(v.position.x+fwd.x*2.4, ud.H+0.9, v.position.z+fwd.z*2.4);
+  const dir = best ? new THREE.Vector3(best.x-o.x,0.04,best.z-o.z).normalize() : new THREE.Vector3(fwd.x,0.03,fwd.z).normalize();
+  if(ud.turret){ const ta=Math.atan2(-dir.x,-dir.z)-ry; ud.turret.rotation.y=lerp2angle(ud.turret.rotation.y,ta,0.5); }
+  spawnRocket(o,dir,{explosive:true,power:ud.abrams});
+  G.audio.explosion(); G.shake=Math.min(0.9,(G.shake||0)+0.35); G.particles.burst(o.x+dir.x*2,o.y,o.z+dir.z*2,'fire',4);
+  if(!G.firedInPublic){ addWanted(1); G.firedInPublic=true; setTimeout(()=>G.firedInPublic=false,3000); }
+}
 function firePrimary(){
   // in a technical, FIRE drives the mounted turret (handled in updateVehiclePlayer)
   if(G.player.inVehicle && G.player.inVehicle.userData.technical){ fireTurret(); return; }
   if(G.player.inVehicle && G.player.inVehicle.userData.missiletruck){ fireMissileRack(); return; }
+  if(G.player.inVehicle && (G.player.inVehicle.userData.tank||G.player.inVehicle.userData.abrams)){ fireTankCannon(); return; }
   const w=WEAPONS[G.player.weapon]; const wd=G.player.weapons[G.player.weapon];
   if(G.player.fireCD>0) return;
   if(w.melee){ meleePunch(); G.player.fireCD=w.cd; return; }
@@ -5679,13 +5842,18 @@ function flamethrow(origin,dir){
 }
 function spawnRocket(origin,dir,opts){
   opts=opts||{}; const ex=!!opts.explosive;
-  const m=new THREE.Mesh(new THREE.CylinderGeometry(ex?0.2:0.15,ex?0.2:0.15,ex?1.3:1,8),
-    new THREE.MeshStandardMaterial({color:0x333333,emissive:ex?0xff2200:0xaa6600,emissiveIntensity:1.8}));
-  // spawn slightly ahead so it clears the launcher
+  const grp=new THREE.Group();
+  const body=new THREE.Mesh(new THREE.CylinderGeometry(ex?0.2:0.15,ex?0.2:0.15,ex?1.3:1,8),
+    new THREE.MeshStandardMaterial({color:0x2a2a2a,emissive:ex?0xff2200:0xaa6600,emissiveIntensity:1.2}));
+  body.rotation.x=Math.PI/2; grp.add(body);
+  const nose=new THREE.Mesh(new THREE.ConeGeometry(ex?0.2:0.15,0.5,8),new THREE.MeshStandardMaterial({color:0x884400})); nose.rotation.x=Math.PI/2; nose.position.z=(ex?0.9:0.75); grp.add(nose);
+  // flame at the tail (the "flying with fire" effect)
+  const flame=new THREE.Mesh(new THREE.ConeGeometry(ex?0.22:0.16,ex?1.1:0.8,8),new THREE.MeshBasicMaterial({color:0xffb030})); flame.rotation.x=-Math.PI/2; flame.position.z=-(ex?1.2:0.95); grp.add(flame);
+  grp.userData.flame=flame;
   const o=origin.clone().add(dir.clone().multiplyScalar(3));
-  m.position.copy(o); G.scene.add(m);
-  G.bullets.push({mesh:m,vx:dir.x*45,vy:dir.y*45,vz:dir.z*45,life:5,type:'rocket',armT:0.08,
-    blastR: ex?22:13, blastDmg: ex?110:70, explosive:ex});
+  grp.position.copy(o); G.scene.add(grp);
+  G.bullets.push({mesh:grp,vx:dir.x*(opts.power?60:45),vy:dir.y*(opts.power?60:45),vz:dir.z*(opts.power?60:45),life:5,type:'rocket',armT:0.08,
+    blastR: opts.power?30:(ex?22:13), blastDmg: opts.power?170:(ex?110:70), explosive:ex, flame});
 }
 // Heat-seeking missile: tracks the player, must be out-maneuvered. 5-star only.
 function spawnHoming(origin){
@@ -5956,10 +6124,20 @@ gameDiv.addEventListener('click',()=>{ if(G.started && !G.paused && !isTouch && 
 
 function tryEnterExit(){
   if(!G.started) return;
-  if(G.player.inVehicle){ exitVehicle(); }
-  else { const v=nearestVehicle(3); if(v) enterVehicle(v); }
+  if(G.player.inAircraft){ exitAircraft(); return; }
+  if(G.player.inVehicle){ exitVehicle(); return; }
+  // a parked aircraft at the airfield takes priority when close
+  const ac=nearestAircraft(5); if(ac){ enterAircraft(ac); return; }
+  const v=nearestVehicle(3); if(v) enterVehicle(v);
+}
+function nearestAircraft(maxd){
+  if(!G.aircraftPark) return null; let best=null,bd=maxd; const p=G.player.mesh.position;
+  G.aircraftPark.forEach(a=>{ if(a.taken) return; const d=Math.hypot(a.group.position.x-p.x,a.group.position.z-p.z); if(d<bd){bd=d;best=a;} });
+  return best;
 }
 function tryInteract(){
+  // an open shop panel (hospital/ammu/food) → close it (works on mobile)
+  if(shopOpen){ closeShop(); return; }
   // inside a store → leave
   if(G.inStore){ exitStore(); return; }
   // mission briefing
@@ -6145,6 +6323,17 @@ function closeWeaponMenu(){ weaponMenuOpen=false; G.paused=false; document.getEl
 // =================== CAMERA UPDATE ===================
 function updateCamera(dt){
   const cam=G.camera;
+  if(G.player.inAircraft){
+    const ac=G.player.inAircraft; const g=ac.group; const ry=g.rotation.y;
+    const back=ac.heli?12:18, up=ac.heli?5:6;
+    const tx=g.position.x-Math.sin(ry)*back, tz=g.position.z-Math.cos(ry)*back;
+    cam.position.x=lerp(cam.position.x,tx,0.08); cam.position.z=lerp(cam.position.z,tz,0.08);
+    cam.position.y=lerp(cam.position.y,g.position.y+up,0.1);
+    cam.lookAt(g.position.x,g.position.y+0.5,g.position.z);
+    const targetFov=62+ (Math.abs(ac.speed)/ac.maxSpeed)*16;
+    cam.fov=lerp(cam.fov,targetFov,0.05); cam.updateProjectionMatrix();
+    return;
+  }
   if(G.player.inVehicle){
     const v=G.player.inVehicle; const ry=v.rotation.y;
     if(G.cameraMode===1){ // bumper
@@ -6311,14 +6500,16 @@ function updateVehiclePlayer(dt){
   // engine + speed HUD
   if(ud.turretCD>0) ud.turretCD-=dt;
   if(ud.rackCD>0) ud.rackCD-=dt;
+  if(ud.tankCD>0) ud.tankCD-=dt;
   if(ud.technical && G.mouse.down) fireTurret();      // hold FIRE: mounted gun
   if(ud.missiletruck && G.mouse.down) fireMissileRack(); // hold FIRE: missile rack
-  // a recruited crew member mans the weapon for you when an enemy is close
-  if((ud.technical||ud.missiletruck) && !G.mouse.down && G.peds.some(p=>p.ally&&!p.dead)){
+  if((ud.tank||ud.abrams) && G.mouse.down) fireTankCannon();
+  // SMART AUTO-TURRET: turret cars auto-engage the nearest threat for you
+  if(ud.technical||ud.missiletruck||ud.tank||ud.abrams){
     let enemyNear=false;
-    for(const v2 of G.police){ if(!v2.userData.burned && Math.hypot(v2.position.x-v.position.x,v2.position.z-v.position.z)<70){ enemyNear=true; break; } }
-    if(!enemyNear) for(const c of G.copsOnFoot){ if(Math.hypot(c.mesh.position.x-v.position.x,c.mesh.position.z-v.position.z)<70){ enemyNear=true; break; } }
-    if(enemyNear){ if(ud.technical) fireTurret(); else fireMissileRack(); }
+    for(const v2 of G.police){ if(v2!==v && !v2.userData.burned && Math.hypot(v2.position.x-v.position.x,v2.position.z-v.position.z)<75){ enemyNear=true; break; } }
+    if(!enemyNear) for(const c of G.copsOnFoot){ if(Math.hypot(c.mesh.position.x-v.position.x,c.mesh.position.z-v.position.z)<75){ enemyNear=true; break; } }
+    if(enemyNear){ if(ud.technical) fireTurret(); else if(ud.missiletruck) fireMissileRack(); else fireTankCannon(); }
   }
   // spike-trap slow
   if(ud.spikeT>0){ ud.spikeT-=dt; }
@@ -6475,8 +6666,8 @@ function updatePolice(dt){
       if(ud.turret){ const tAng=Math.atan2(-dx,-dz)-v.rotation.y; ud.turret.rotation.y=lerp2angle(ud.turret.rotation.y,tAng,0.08); }
       if(ud.rocketCD<=0 && dist<95 && dist>8 && hasLOS(v.position,p)){
         ud.rocketCD=ud.tank?rand(3,4.5):rand(2,3.5);
-        // double-cannon tanks fire 4-rocket salvos; others fire 2
-        fireSalvo({x:v.position.x,y:1.6,z:v.position.z}, p, ud.doubleCannon?4:(ud.tank?3:2), ud.tank?0.5:0.3);
+        if(ud.abrams){ const o=new THREE.Vector3(v.position.x,1.8,v.position.z); const d=new THREE.Vector3(p.x-o.x,0.05,p.z-o.z).normalize(); spawnRocket(o,d,{explosive:true,power:true}); G.audio.explosion(); }
+        else fireSalvo({x:v.position.x,y:1.6,z:v.position.z}, p, ud.doubleCannon?4:(ud.tank?3:2), ud.tank?0.5:0.3);
       }
     }
   });
@@ -6659,7 +6850,7 @@ function damageHeli(dmg){
 function spawnJet(type){
   type=type||'a10';
   const g=new THREE.Group();
-  const mat=new THREE.MeshStandardMaterial({color:type==='a10'?0x44483c:0x4a505a,metalness:0.5,roughness:0.5});
+  const mat=new THREE.MeshStandardMaterial({color:type==='a10'?0x44483c:(type==='f35'?0x2e323a:0x4a505a),metalness:0.5,roughness:0.5});
   if(type==='a10'){
     const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.55,0.45,7,8),mat); fus.rotation.x=Math.PI/2; g.add(fus);
     const nose=new THREE.Mesh(new THREE.CylinderGeometry(0.45,0.35,1.2,8),mat); nose.rotation.x=Math.PI/2; nose.position.z=3.8; g.add(nose);
@@ -6670,18 +6861,24 @@ function spawnJet(type){
   } else {
     const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.3,7,8),mat); fus.rotation.x=Math.PI/2; g.add(fus);
     const nose=new THREE.Mesh(new THREE.ConeGeometry(0.5,1.6,8),mat); nose.rotation.x=-Math.PI/2; nose.position.z=4; g.add(nose);
-    const wing=new THREE.Mesh(new THREE.BoxGeometry(7,0.15,2.2),mat); wing.position.z=-0.5; g.add(wing);
-    const fin=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.4,1.4),mat); fin.position.set(0,0.7,-3); g.add(fin);
+    const wing=new THREE.Mesh(new THREE.BoxGeometry(type==='f35'?7.6:7,0.15,type==='f35'?2.8:2.2),mat); wing.position.z=-0.5; g.add(wing);
+    if(type==='f35'){
+      // stealth fighter: canted twin tails
+      [-0.5,0.5].forEach(fx=>{ const fin=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.4,1.4),mat); fin.position.set(fx,0.6,-3); fin.rotation.z=fx*0.25; g.add(fin); });
+      const tailW=new THREE.Mesh(new THREE.BoxGeometry(2.6,0.12,1),mat); tailW.position.z=-3.1; g.add(tailW);
+    } else {
+      const fin=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.4,1.4),mat); fin.position.set(0,0.7,-3); g.add(fin);
+    }
   }
   const flame=new THREE.Mesh(new THREE.ConeGeometry(0.35,1.4,8),new THREE.MeshBasicMaterial({color:0xffaa33})); flame.rotation.x=Math.PI/2; flame.position.z=-4; g.add(flame);
   g.traverse(o=>{ if(o.isMesh) o.castShadow=!LOW; });
   const p=G.player.mesh.position; const a=rand(0,TAU);
   const sx=p.x+Math.cos(a)*440, sz=p.z+Math.sin(a)*440;
   const dir=new THREE.Vector3(p.x-sx,0,p.z-sz).normalize();
-  g.position.set(sx, type==='a10'?34:52, sz); g.rotation.y=Math.atan2(dir.x,dir.z);
+  g.position.set(sx, type==='a10'?34:(type==='f35'?58:52), sz); g.rotation.y=Math.atan2(dir.x,dir.z);
   G.scene.add(g);
   G.jets=G.jets||[];
-  G.jets.push({group:g,dir,speed:type==='a10'?72:95,life:14,type,strafeCD:0,bombed:false});
+  G.jets.push({group:g,dir,speed:type==='a10'?72:(type==='f35'?112:95),life:14,type,strafeCD:0,bombed:false});
 }
 // ---- Police barricades: blockades you can shoot down ----
 function spawnBarricade(x,z,ang){
@@ -6789,7 +6986,7 @@ function updateJets(dt){
   const want=Math.ceil(G.wanted);
   G.jetCD=(G.jetCD||0)-dt;
   const cap=LOW?2:8;   // toward a "squadron" while staying performant
-  if(want>=5 && G.jets.length<cap && G.jetCD<=0){ spawnJet(Math.random()<0.75?'a10':'f16'); G.jetCD=rand(1.5,3.5); }
+  if(want>=5 && G.jets.length<cap && G.jetCD<=0){ const r=Math.random(); spawnJet(r<0.55?'a10':(r<0.8?'f16':'f35')); G.jetCD=rand(1.5,3.5); }
   const p=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
   for(let i=G.jets.length-1;i>=0;i--){ const j=G.jets[i]; j.life-=dt;
     j.group.position.x+=j.dir.x*j.speed*dt; j.group.position.z+=j.dir.z*j.speed*dt;
@@ -6803,6 +7000,9 @@ function updateJets(dt){
         if(Math.random()<(LOW?0.3:0.6)) G.audio.gunshot('rifle');
         G.particles.burst(p.x+rand(-4,4),0.3,p.z+rand(-4,4),'spark',LOW?2:3);
       }
+    } else if(j.type==='f35'){
+      // stealth fighter: a heavier guided salvo from longer range
+      if(!j.bombed && d<95){ j.bombed=true; fireSalvo({x:j.group.position.x,y:j.group.position.y-2,z:j.group.position.z}, p, 4, 0.5); }
     } else {
       if(!j.bombed && d<75){ j.bombed=true; fireSalvo({x:j.group.position.x,y:j.group.position.y-2,z:j.group.position.z}, p, 3, 0.6); }
     }
@@ -6982,13 +7182,18 @@ function updateBullets(dt){
       G.particles.spawn(b.mesh.position.x,b.mesh.position.y,b.mesh.position.z,'fire');
       if(b.armT>0) b.armT-=dt;
       const dpl=Math.hypot(p.x-b.mesh.position.x,p.z-b.mesh.position.z);
-      if((b.armT<=0 && dpl<3) || b.life<=0){ createExplosion(b.mesh.position.x,1,b.mesh.position.z,16,90); G.scene.remove(b.mesh); G.bullets.splice(i,1); }
+      if((b.armT<=0 && dpl<3) || b.life<=0){ createExplosion(b.mesh.position.x,1,b.mesh.position.z,9,42); G.scene.remove(b.mesh); G.bullets.splice(i,1); }
       continue;
     }
     b.vy-= (b.type==='rocket'?0:20)*dt;
     b.mesh.position.x+=b.vx*dt; b.mesh.position.y+=b.vy*dt; b.mesh.position.z+=b.vz*dt;
-    if(b.type==='rocket'){ G.particles.spawn(b.mesh.position.x,b.mesh.position.y,b.mesh.position.z,'smoke');
-      const dir=new THREE.Vector3(b.vx,b.vy,b.vz); b.mesh.lookAt(b.mesh.position.clone().add(dir)); }
+    if(b.type==='rocket'){
+      const dir=new THREE.Vector3(b.vx,b.vy,b.vz); b.mesh.lookAt(b.mesh.position.clone().add(dir));
+      // fiery exhaust trail behind the rocket
+      const tx=b.mesh.position.x-b.vx*0.04, ty=b.mesh.position.y-b.vy*0.04, tz=b.mesh.position.z-b.vz*0.04;
+      G.particles.spawn(tx,ty,tz,'fire'); if(Math.random()<0.6) G.particles.spawn(tx,ty,tz,'smoke');
+      if(b.flame) b.flame.scale.setScalar(0.8+Math.random()*0.5);
+    }
     let explode=false;
     if(b.mesh.position.y<=0){
       if(b.type==='rocket'){ explode=true; }
@@ -7189,7 +7394,7 @@ function loop(now){
   if(G.started && !G.paused && !shopOpen){
     const sdt=dt*G.timeScale;
     const t=now/1000;
-    updatePlayer(sdt,t);
+    if(G.player.inAircraft) updateAircraft(sdt); else updatePlayer(sdt,t);
     // slow health regen (player buff): regenerates after a few seconds without damage
     if(G.player.regenT>0) G.player.regenT-=sdt;
     else if(G.player.hp>0 && G.player.hp<G.player.maxHp) G.player.hp=Math.min(G.player.maxHp,G.player.hp+8*sdt);
@@ -7210,6 +7415,7 @@ function loop(now){
     updateHazards(sdt);
     updateBarricades(sdt);
     updateBoats(sdt);
+    updateDestroyers(sdt);
     updateTrafficLights(sdt);
     updateWater(t);
     updateFountain();
