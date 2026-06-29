@@ -5403,6 +5403,56 @@ function makeVehicle(type,x,z,opts){
   return g;
 }
 
+// A MASSIVE police battle tank ("Leviathan") — stealable, fires rapid small
+// rockets and slow heavy rockets from its huge cannon. Built as a standalone
+// group but wired to be drivable by the normal vehicle systems.
+function buildMegaTank(x,z,opts){
+  opts=opts||{};
+  const g=new THREE.Group();
+  const W=6,H=3,L=12;
+  const armor=new THREE.MeshStandardMaterial({color:opts.color||0x40452c,metalness:0.4,roughness:0.7});
+  const dark=new THREE.MeshStandardMaterial({color:0x1c1e18,metalness:0.3,roughness:0.7});
+  const hull=new THREE.Mesh(new THREE.BoxGeometry(W,H*0.7,L),armor); hull.position.y=1.5; g.add(hull);
+  const glacis=new THREE.Mesh(new THREE.BoxGeometry(W,H*0.55,3),armor); glacis.position.set(0,1.3,L/2-0.6); glacis.rotation.x=-0.6; g.add(glacis);
+  const wheels=[];
+  [-1,1].forEach(side=>{ const track=new THREE.Mesh(new THREE.BoxGeometry(1.4,1.6,L+0.6),dark); track.position.set(side*(W/2+0.2),0.8,0); g.add(track);
+    for(let i=0;i<6;i++){ const wl=new THREE.Mesh(new THREE.CylinderGeometry(0.7,0.7,1.4,12),new THREE.MeshStandardMaterial({color:0x111111})); wl.rotation.z=Math.PI/2; wl.position.set(side*(W/2+0.2),0.8,-L/2+1.3+i*((L-2.6)/5)); g.add(wl); wheels.push(wl); } });
+  // big rotating turret + very long heavy cannon
+  const turret=new THREE.Group(); turret.position.set(0,H*0.7+1.0,-0.5);
+  turret.add(new THREE.Mesh(new THREE.BoxGeometry(W*0.82,1.4,5),armor));
+  const tfront=new THREE.Mesh(new THREE.BoxGeometry(W*0.82,1.2,1.6),armor); tfront.position.set(0,-0.1,2.8); tfront.rotation.x=0.3; turret.add(tfront);
+  const barrel=new THREE.Mesh(new THREE.CylinderGeometry(0.32,0.4,9,12),new THREE.MeshStandardMaterial({color:0x202020})); barrel.rotation.x=Math.PI/2; barrel.position.set(0,0,6.2); turret.add(barrel);
+  const muzzle=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.5,0.9,12),dark); muzzle.rotation.x=Math.PI/2; muzzle.position.set(0,0,10.4); turret.add(muzzle);
+  // side small-rocket pods
+  [-1,1].forEach(side=>{ const pod=new THREE.Mesh(new THREE.BoxGeometry(0.7,0.8,1.6),dark); pod.position.set(side*(W*0.42),0.3,-1); turret.add(pod); });
+  g.add(turret);
+  g.traverse(o=>{ if(o.isMesh) o.castShadow=!LOW; });
+  g.position.set(x,0,z);
+  g.userData={ type:'megatank', vtype:{moto:false,W,H,L}, name:opts.name||'LEVIATHAN BATTLE TANK', wheels, speed:0, steer:0,
+    occupied:false, isPlayer:false, police:!!opts.police, military:true, color:opts.color||0x40452c,
+    vx:0,vz:0, drift:0, onFire:false, fireTimer:0, smoking:false, burned:false, exitTimer:0, aiState:'idle',
+    L,W,H, maxSpeed:opts.maxSpeed||9, wr:0.7, turret, megatank:true, tank:false, smallCD:0, bigCD:0,
+    health:opts.health||1400, despawnTimer:0 };
+  G.scene.add(g);
+  return g;
+}
+// Player firing the Leviathan: hold FIRE to spray small rockets while the heavy
+// cannon lobs a big rocket on its own slower cadence — both from the main gun.
+function fireMegaTank(){
+  const v=G.player.inVehicle; if(!v||!v.userData.megatank) return;
+  const ud=v.userData; const ry=v.rotation.y; const fwd={x:-Math.sin(ry),z:-Math.cos(ry)};
+  let best=null,bd=150;
+  const consider=(pos)=>{ const ddx=pos.x-v.position.x,ddz=pos.z-v.position.z,d=Math.hypot(ddx,ddz); if(d>bd||d<6)return; if((ddx*fwd.x+ddz*fwd.z)/d<0.1)return; bd=d; best=pos; };
+  G.police.forEach(pc=>{ if(pc!==v && !pc.userData.burned) consider(pc.position); });
+  G.copsOnFoot.forEach(c=>consider(c.mesh.position));
+  const aimx=best?best.x:v.position.x+fwd.x*60, aimz=best?best.z:v.position.z+fwd.z*60;
+  if(ud.turret){ const ta=Math.atan2(-(aimx-v.position.x),-(aimz-v.position.z))-ry; ud.turret.rotation.y=lerp2angle(ud.turret.rotation.y,ta,0.4); }
+  const o=new THREE.Vector3(v.position.x+fwd.x*5, ud.H+1.4, v.position.z+fwd.z*5);
+  const dir=new THREE.Vector3(aimx-o.x,0.03,aimz-o.z).normalize();
+  if((ud.smallCD||0)<=0){ ud.smallCD=0.22; spawnRocket(o,dir,{explosive:true}); G.audio.gunshot('rifle'); G.particles.burst(o.x+dir.x*2,o.y,o.z+dir.z*2,'fire',2); }
+  if((ud.bigCD||0)<=0){ ud.bigCD=2.6; spawnRocket(o,dir,{explosive:true,power:true}); G.audio.explosion(); G.shake=Math.min(0.9,(G.shake||0)+0.4); G.particles.burst(o.x+dir.x*3,o.y,o.z+dir.z*3,'fire',5); }
+  if(!G.firedInPublic){ addWanted(1); G.firedInPublic=true; setTimeout(()=>G.firedInPublic=false,3000); }
+}
 function spawnTraffic(){
   const half=G.CITY/2, offset=-half+CELL/2;
   const nTraffic=LOW?22:95, nParked=LOW?10:38;
@@ -5845,6 +5895,13 @@ function spawnPoliceCar(){
   let opts={police:true,color:0x111111,name:'Police'};
   const want=Math.ceil(G.wanted);
   let type='sedan';
+  // a massive, stealable police battle tank shows up at 5 stars
+  if(want>=5 && Math.random()<0.15){
+    const v=buildMegaTank(x,z,{police:true,color:0x40452c,health:1400,maxSpeed:9});
+    v.rotation.y=a+Math.PI; v.userData.aiState='police'; v.userData.arrestTimer=0;
+    v.userData.flank=rand(-1,1); v.userData.shootCD=rand(0.5,2); v.userData.deployCD=2; v.userData.rocketCD=rand(1,2);
+    G.police.push(v); return;
+  }
   if(want>=5){
     const r5=Math.random();
     if(r5<0.22){ opts={tank:true,abrams:true,doubleCannon:false,military:true,color:0x6b6a4a,name:'M1 Abrams'}; type='suv'; }
@@ -6087,6 +6144,7 @@ function firePrimary(){
   // in a technical, FIRE drives the mounted turret (handled in updateVehiclePlayer)
   if(G.player.inVehicle && G.player.inVehicle.userData.technical){ fireTurret(); return; }
   if(G.player.inVehicle && G.player.inVehicle.userData.missiletruck){ fireMissileRack(); return; }
+  if(G.player.inVehicle && G.player.inVehicle.userData.megatank){ fireMegaTank(); return; }
   if(G.player.inVehicle && (G.player.inVehicle.userData.tank||G.player.inVehicle.userData.abrams)){ fireTankCannon(); return; }
   const w=WEAPONS[G.player.weapon]; const wd=G.player.weapons[G.player.weapon];
   if(G.player.fireCD>0) return;
@@ -6911,15 +6969,17 @@ function updateVehiclePlayer(dt){
   if(ud.turretCD>0) ud.turretCD-=dt;
   if(ud.rackCD>0) ud.rackCD-=dt;
   if(ud.tankCD>0) ud.tankCD-=dt;
+  if(ud.smallCD>0) ud.smallCD-=dt; if(ud.bigCD>0) ud.bigCD-=dt;
   if(ud.technical && G.mouse.down) fireTurret();      // hold FIRE: mounted gun
   if(ud.missiletruck && G.mouse.down) fireMissileRack(); // hold FIRE: missile rack
+  if(ud.megatank && G.mouse.down) fireMegaTank();        // hold FIRE: small + big rockets
   if((ud.tank||ud.abrams) && G.mouse.down) fireTankCannon();
   // SMART AUTO-TURRET: turret cars auto-engage the nearest threat for you
-  if(ud.technical||ud.missiletruck||ud.tank||ud.abrams){
+  if(ud.technical||ud.missiletruck||ud.tank||ud.abrams||ud.megatank){
     let enemyNear=false;
     for(const v2 of G.police){ if(v2!==v && !v2.userData.burned && Math.hypot(v2.position.x-v.position.x,v2.position.z-v.position.z)<75){ enemyNear=true; break; } }
     if(!enemyNear) for(const c of G.copsOnFoot){ if(Math.hypot(c.mesh.position.x-v.position.x,c.mesh.position.z-v.position.z)<75){ enemyNear=true; break; } }
-    if(enemyNear){ if(ud.technical) fireTurret(); else if(ud.missiletruck) fireMissileRack(); else fireTankCannon(); }
+    if(enemyNear){ if(ud.technical) fireTurret(); else if(ud.missiletruck) fireMissileRack(); else if(ud.megatank) fireMegaTank(); else fireTankCannon(); }
   }
   // spike-trap slow
   if(ud.spikeT>0){ ud.spikeT-=dt; }
@@ -7078,6 +7138,17 @@ function updatePolice(dt){
         ud.rocketCD=ud.tank?rand(3,4.5):rand(2,3.5);
         if(ud.abrams){ const o=new THREE.Vector3(v.position.x,1.8,v.position.z); const d=new THREE.Vector3(p.x-o.x,0.05,p.z-o.z).normalize(); spawnRocket(o,d,{explosive:true,power:true}); G.audio.explosion(); }
         else fireSalvo({x:v.position.x,y:1.6,z:v.position.z}, p, ud.doubleCannon?4:(ud.tank?3:2), ud.tank?0.5:0.3);
+      }
+    }
+    // LEVIATHAN battle tank: rains small rockets with the odd heavy round
+    if(ud.megatank){
+      ud.rocketCD=(ud.rocketCD||rand(1,2))-dt;
+      if(ud.turret){ const tAng=Math.atan2(-dx,-dz)-v.rotation.y; ud.turret.rotation.y=lerp2angle(ud.turret.rotation.y,tAng,0.1); }
+      if(ud.rocketCD<=0 && dist<130 && dist>8 && hasLOS(v.position,p)){
+        ud.rocketCD=rand(0.5,1.2);
+        const o=new THREE.Vector3(v.position.x,ud.H+1.4,v.position.z); const d=new THREE.Vector3(p.x-o.x,0.03,p.z-o.z).normalize();
+        if(Math.random()<0.3){ spawnRocket(o,d,{explosive:true,power:true}); G.audio.explosion(); }
+        else { spawnRocket(o,d,{explosive:true}); G.audio.gunshot('rifle'); }
       }
     }
   });
