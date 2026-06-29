@@ -139,10 +139,11 @@
   #hdToggle { position:fixed; top:8px; left:50%; transform:translateX(54%); z-index:120; pointer-events:auto;
     background:rgba(0,0,0,0.5); color:#7cf; border:1px solid #6699cc; border-radius:6px; padding:5px 12px;
     font-size:11px; font-weight:900; }
-  #shipGui { position:fixed; left:50%; bottom:3vmin; transform:translateX(-50%); display:none; gap:1.2vmin; z-index:140; pointer-events:none; }
+  #shipGui { position:fixed; left:50%; bottom:2.4vmin; transform:translateX(-50%); display:none; gap:0.8vmin; z-index:140;
+    pointer-events:none; flex-wrap:wrap; justify-content:center; max-width:min(94vw,760px); }
   #shipGui.on { display:flex; }
   #shipGui .sbtn { pointer-events:auto; background:rgba(16,38,58,0.72); border:2px solid #4ad6ff; color:#d4f1ff;
-    font-weight:900; padding:1.4vmin 2.2vmin; border-radius:10px; font-size:clamp(12px,2.4vmin,18px); cursor:pointer; user-select:none; }
+    font-weight:900; padding:1.0vmin 1.6vmin; border-radius:9px; font-size:clamp(11px,2.0vmin,16px); cursor:pointer; user-select:none; }
   #shipGui .sbtn:active { background:#4ad6ff; color:#012; }
   #shipGui .sgo { border-color:#ff6a6a; color:#ffd2d2; }
   #weaponItems .item { width:150px; flex-direction:column; align-items:center; gap:4px; }
@@ -242,7 +243,14 @@
   <div id="btnRecruit" class="tbtn">CREW</div>
 </div>
 <div id="shipGui">
-  <div class="sbtn" id="shipMissiles">🚀 MISSILES</div>
+  <div class="sbtn" id="shipMainGun">🔫 GUN</div>
+  <div class="sbtn" id="shipMissiles">🚀 MISSILE</div>
+  <div class="sbtn" id="shipTorpedo">🌊 TORPEDO</div>
+  <div class="sbtn" id="shipRailgun">⚡ RAILGUN</div>
+  <div class="sbtn" id="shipFlak">💥 FLAK</div>
+  <div class="sbtn" id="shipArtillery">🎯 ARTILLERY</div>
+  <div class="sbtn" id="shipCruise">🛰 CRUISE</div>
+  <div class="sbtn" id="shipGatling">🔩 GATLING</div>
   <div class="sbtn" id="shipCram">🛡 CRAM: ON</div>
   <div class="sbtn" id="shipAA">✈ AA: ON</div>
   <div class="sbtn sgo" id="shipLeave">⎋ LEAVE</div>
@@ -4218,6 +4226,9 @@ function animatePunch(h,dt){
 
 /* ---------- Procedural weapon meshes (held in hand) ---------- */
 function makeWeaponMesh(name){
+  // new guns reuse a fitting silhouette
+  const alias={magnum:'pistol',mac10:'smg',carbine:'rifle',lmg:'rifle',minigun:'rifle',autoshotgun:'shotgun',marksman:'sniper',railgun:'sniper',grenadelauncher:'rpg'};
+  if(alias[name]) name=alias[name];
   const g=new THREE.Group();
   const metal=new THREE.MeshStandardMaterial({color:0x2b2b30,roughness:0.5,metalness:0.7});
   const dark=new THREE.MeshStandardMaterial({color:0x14140f,roughness:0.7});
@@ -4735,8 +4746,8 @@ function buildAAMount(){
 }
 function updateDestroyers(dt){
   if(!G.destroyers||!G.destroyers.length) return;
-  const p=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
-  const nearWater = p.z < -G.CITY/2+70;
+  const p=threatPos();
+  const nearWater = G.player.onShip ? true : p.z < -G.CITY/2+70;
   G.destroyers.forEach(d=>{
     d.phase+=dt; if(!d.owned) d.group.position.y=Math.sin(d.phase*0.6)*0.3;   // gentle bob (command ship sets its own y)
     if(d.owned){ updateOwnedShip(d,dt); return; }
@@ -4858,6 +4869,7 @@ function tryBoardShip(){
 }
 function boardDestroyer(d){
   d.owned=true; d.missileCD=1; d.aaCD=0; d.cramPDCD=0; d.mainGunCD=0; d.manMissileCD=0; d.cramOn=true; d.aaOn=true;
+  d.torpCD=0; d.railCD=0; d.flakCD=0; d.artyCD=0; d.cruiseCD=0; d.gatCD=0;
   // retrofit: ensure a CRAM + add anti-air mounts
   if(!d.cram){ d.cram=true; d.cramMesh=buildCRAM(); d.cramMesh.position.set(0,7.6,-16); d.group.add(d.cramMesh); }
   if(!d.aa.length){ [[-2.6,6.5],[2.6,6.5],[0,-12]].forEach(([lx,lz])=>{ const m=buildAAMount(); m.position.set(lx,4.4,lz); d.group.add(m); d.aa.push(m); }); }
@@ -4910,6 +4922,76 @@ function fireShipMissiles(){
   const tgt= gt? gt.pos : {x:sp.x,y:1,z:sp.z-90};
   fireSalvo({x:sp.x,y:6.5,z:sp.z}, tgt, LOW?3:4, 0.7); toast('Missiles away!');
 }
+// ---- the destroyer's expanded arsenal ----
+function shipTarget(d,range){ const sp=d.group.position; return nearestGroundEnemyTo(sp,range)||nearestAirEnemyTo(sp,range); }
+function fireShipTorpedo(){
+  const d=G.player.onShip; if(!d||d.kind!=='destroyer'||d.torpCD>0) return; d.torpCD=1.0;
+  const sp=d.group.position, ry=d.group.rotation.y, fx=-Math.sin(ry), fz=-Math.cos(ry);
+  const o=new THREE.Vector3(sp.x+fx*8,0.3,sp.z+fz*8);
+  const gt=nearestGroundEnemyTo(sp,300);
+  const dir=(gt?new THREE.Vector3(gt.pos.x-o.x,0,gt.pos.z-o.z):new THREE.Vector3(fx,0,fz)).normalize();
+  const m=new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.3,2.6,8),new THREE.MeshStandardMaterial({color:0x2a352c,metalness:0.4,roughness:0.5}));
+  m.rotation.x=Math.PI/2; m.position.copy(o); m.lookAt(o.x+dir.x,0.3,o.z+dir.z); G.scene.add(m);
+  G.bullets.push({mesh:m,vx:dir.x*32,vy:0,vz:dir.z*32,life:6,type:'torpedo',blastR:26,blastDmg:130});
+  G.audio.explosion(); toast('Torpedo away!');
+}
+function fireShipRailgun(){
+  const d=G.player.onShip; if(!d||d.kind!=='destroyer'||d.railCD>0) return; d.railCD=3.2;
+  const sp=d.group.position; const t=shipTarget(d,460);
+  const o=new THREE.Vector3(sp.x,8,sp.z);
+  const dir=(t?new THREE.Vector3(t.pos.x-o.x,(t.pos.y||1)-o.y,t.pos.z-o.z):new THREE.Vector3(-Math.sin(d.group.rotation.y),0,-Math.cos(d.group.rotation.y))).normalize();
+  spawnRailBeam(o,dir);
+  if(t){ if(t.air){ if(t.air==='heli') damageHeli(220); else damageJet(t.j,220); }
+    else { if(t.o.userData) damageVehicle(t.o,500); else { t.o.hp-=500; if(t.o.hp<=0) killCop(t.o); } }
+    createExplosion(t.pos.x,(t.pos.y||1),t.pos.z,12,70); }
+  G.audio.explosion(); G.shake=Math.min(1,(G.shake||0)+0.5);
+  toast('RAILGUN!');
+}
+function spawnRailBeam(o,dir){
+  const len=460; const m=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,len),new THREE.MeshBasicMaterial({color:0x9be8ff,transparent:true,opacity:0.9}));
+  m.position.set(o.x+dir.x*len/2,o.y+dir.y*len/2,o.z+dir.z*len/2); m.lookAt(o.x+dir.x*len,o.y+dir.y*len,o.z+dir.z*len);
+  G.scene.add(m); G.bullets.push({mesh:m,vx:0,vy:0,vz:0,life:0.25,type:'beam'});
+}
+function fireShipFlak(){
+  const d=G.player.onShip; if(!d||d.kind!=='destroyer'||d.flakCD>0) return; d.flakCD=1.8;
+  const sp=d.group.position;
+  // shred incoming missiles + damage every nearby aircraft
+  (G.bullets||[]).forEach(b=>{ if(b.dead||!b.mesh) return; if((b.antiShip||b.type==='homing')&&Math.hypot(b.mesh.position.x-sp.x,b.mesh.position.z-sp.z)<140) b.dead=true; });
+  (G.jets||[]).slice().forEach(j=>{ if(Math.hypot(j.group.position.x-sp.x,j.group.position.z-sp.z)<160) damageJet(j,45); });
+  if(G.heli && !G.heli.crashing && Math.hypot(G.heli.group.position.x-sp.x,G.heli.group.position.z-sp.z)<160) damageHeli(45);
+  for(let k=0;k<(LOW?5:10);k++){ const a=rand(0,TAU), rr=rand(20,90), yy=rand(20,55);
+    G.particles.burst(sp.x+Math.cos(a)*rr,yy,sp.z+Math.sin(a)*rr,'smoke',2); G.particles.burst(sp.x+Math.cos(a)*rr,yy,sp.z+Math.sin(a)*rr,'spark',2); }
+  G.audio.explosion(); toast('Flak screen!');
+}
+function fireShipArtillery(){
+  const d=G.player.onShip; if(!d||d.kind!=='destroyer'||d.artyCD>0) return; d.artyCD=5;
+  const sp=d.group.position; const gt=nearestGroundEnemyTo(sp,380);
+  const cx=gt?gt.pos.x:sp.x, cz=gt?gt.pos.z:sp.z-100;
+  const n=LOW?5:9;
+  for(let k=0;k<n;k++){ setTimeout(()=>{ if(!G.started||!G.player.onShip) return; createExplosion(cx+rand(-18,18),1,cz+rand(-18,18),14,90); }, k*170); }
+  G.audio.explosion(); toast('Artillery barrage inbound!');
+}
+function fireShipCruise(){
+  const d=G.player.onShip; if(!d||d.kind!=='destroyer'||d.cruiseCD>0) return; d.cruiseCD=3;
+  const sp=d.group.position; const t=shipTarget(d,460); const tp=t?t.pos:{x:sp.x,y:1,z:sp.z-120};
+  const o=new THREE.Vector3(sp.x,9,sp.z);
+  for(let k=0;k<3;k++){ setTimeout(()=>{ if(!G.started||!G.player.onShip) return;
+    const dir=new THREE.Vector3(tp.x-o.x+rand(-6,6),(tp.y||1)-o.y,tp.z-o.z+rand(-6,6)).normalize();
+    spawnRocket(o.clone(),dir,{explosive:true,power:true}); G.audio.explosion(); }, k*150); }
+  toast('Cruise missiles launched!');
+}
+function fireShipGatling(){
+  const d=G.player.onShip; if(!d||d.kind!=='destroyer'||d.gatCD>0) return; d.gatCD=0.5;
+  const sp=d.group.position; const o=new THREE.Vector3(sp.x,7,sp.z);
+  for(let k=0;k<(LOW?5:8);k++){
+    const t=nearestGroundEnemyTo(sp,150)||nearestAirEnemyTo(sp,210);
+    const dir=(t?new THREE.Vector3(t.pos.x-o.x+rand(-3,3),(t.pos.y||1)-o.y,t.pos.z-o.z+rand(-3,3)):new THREE.Vector3(-Math.sin(d.group.rotation.y),0,-Math.cos(d.group.rotation.y))).normalize();
+    spawnTracer(o,dir);
+    if(t && Math.random()<0.6){ if(t.air){ if(t.air==='heli') damageHeli(4); else damageJet(t.j,5); }
+      else { if(t.o.userData) damageVehicle(t.o,5); else { t.o.hp-=5; if(t.o.hp<=0) killCop(t.o); } } }
+  }
+  if(Math.random()<0.5) G.audio.gunshot('smg');
+}
 // Per-frame control while you're aboard a ship (replaces updatePlayer)
 function updateShip(dt){
   const d=G.player.onShip; if(!d) return;
@@ -4927,6 +5009,7 @@ function updateCommandShip(d,dt){
   g.position.z=clamp(g.position.z+fz*d.speed*dt, -G.CITY/2-150, -G.CITY/2-8);
   g.position.y=Math.sin(d.phase*0.6)*0.25;
   d.mainGunCD-=dt; d.manMissileCD-=dt;
+  d.torpCD-=dt; d.railCD-=dt; d.flakCD-=dt; d.artyCD-=dt; d.cruiseCD-=dt; d.gatCD-=dt;
   if(G.mouse.down) fireShipMainGun(d);   // FIRE = main gun
   UI.speed.textContent='HULL '+Math.max(0,Math.round(d.hp/d.maxHp*100))+'%  ·  '+Math.round(Math.abs(d.speed)*2.23)+' kn';
   UI.speed.style.opacity=1;
@@ -5644,6 +5727,16 @@ const WEAPONS={
   molotov:{name:'MOLOTOV',throw:true,clip:10,max:10,icon:'🍾'},
   grenade:{name:'GRENADE',throw:true,fuse:true,clip:10,max:10,icon:'💣',explode:8},
   flamethrower:{name:'FLAME',stream:true,dmg:4,range:12,clip:200,max:200,icon:'🔥'},
+  // --- extra guns ---
+  magnum:{name:'MAGNUM',dmg:46,cd:0.7,range:95,clip:6,max:48,icon:'🔫',sound:'pistol'},
+  mac10:{name:'MAC-10',dmg:8,cd:0.05,range:55,clip:32,max:192,auto:true,spread:5,icon:'🔫',sound:'smg'},
+  carbine:{name:'M4 CARBINE',dmg:16,cd:0.09,range:190,clip:30,max:180,auto:true,spread:1.2,icon:'🔫',sound:'rifle'},
+  lmg:{name:'M249 LMG',dmg:20,cd:0.07,range:210,clip:100,max:400,auto:true,spread:2.6,icon:'🔫',sound:'rifle'},
+  minigun:{name:'MINIGUN',dmg:13,cd:0.03,range:170,clip:300,max:900,auto:true,spread:4,icon:'🔫',sound:'smg'},
+  autoshotgun:{name:'AUTO SHOTGUN',dmg:7,cd:0.32,range:34,clip:12,max:72,pellets:6,spread:11,auto:true,icon:'💥',sound:'shotgun'},
+  marksman:{name:'MARKSMAN RIFLE',dmg:55,cd:0.5,range:360,clip:12,max:72,auto:true,spread:0.4,icon:'🎯',sound:'sniper'},
+  grenadelauncher:{name:'GRENADE LAUNCHER',dmg:90,cd:1.0,projectile:true,clip:6,max:24,icon:'🧨',explode:14,sound:'shotgun'},
+  railgun:{name:'RAILGUN',dmg:150,cd:1.6,range:520,clip:6,max:24,scope:true,icon:'⚡',sound:'sniper'},
 };
 const WEAPON_ORDER=['fists','pistol','shotgun','smg','rifle','sniper','rpg','grenade'];
 
@@ -5658,7 +5751,7 @@ function spawnPickup(x,z,kind){
 }
 function spawnInitialPickups(){
   const half=G.CITY/2, offset=-half+CELL/2;
-  const list=['pistol','shotgun','smg','rifle','sniper','rpg','molotov','grenade','flamethrower'];
+  const list=['pistol','magnum','shotgun','autoshotgun','smg','mac10','rifle','carbine','lmg','minigun','sniper','marksman','railgun','rpg','grenadelauncher','molotov','grenade','flamethrower'];
   list.forEach((w,i)=>{
     const x=offset+randi(0,GRID-1)*CELL+rand(-15,15);
     const z=offset+randi(0,GRID-1)*CELL+rand(-15,15);
@@ -6540,6 +6633,12 @@ window.addEventListener('keydown',e=>{
   if(k==='b'){ if(!recruitPed()) robPed(); } // B: recruit nearby ped (or rob if none recruitable)
   if(k==='q' && !G.wheelOpen) openWheel();
   if(k==='enter' && G.mission&&G.mission.state==='briefing') startMission(G.mission.def);
+  // destroyer weapon hotkeys
+  if(G.player.onShip && G.player.onShip.kind==='destroyer'){
+    if(k==='1') fireShipMainGun(); else if(k==='2') fireShipMissiles(); else if(k==='3') fireShipTorpedo();
+    else if(k==='4') fireShipRailgun(); else if(k==='5') fireShipFlak(); else if(k==='6') fireShipArtillery();
+    else if(k==='7') fireShipCruise(); else if(k==='8') fireShipGatling();
+  }
 });
 window.addEventListener('keyup',e=>{
   const k=e.key.toLowerCase(); keys[k]=false;
@@ -6697,7 +6796,14 @@ function setupTouchUI(){
   const shipBtn=(id,fn)=>{ const el=document.getElementById(id); if(!el) return;
     el.addEventListener('click',e=>{e.preventDefault();fn();});
     el.addEventListener('touchstart',e=>{e.preventDefault();fn();},{passive:false}); };
+  shipBtn('shipMainGun',  ()=>fireShipMainGun());
   shipBtn('shipMissiles', ()=>fireShipMissiles());
+  shipBtn('shipTorpedo',  ()=>fireShipTorpedo());
+  shipBtn('shipRailgun',  ()=>fireShipRailgun());
+  shipBtn('shipFlak',     ()=>fireShipFlak());
+  shipBtn('shipArtillery',()=>fireShipArtillery());
+  shipBtn('shipCruise',   ()=>fireShipCruise());
+  shipBtn('shipGatling',  ()=>fireShipGatling());
   shipBtn('shipCram',     ()=>toggleShipCram());
   shipBtn('shipAA',       ()=>toggleShipAA());
   shipBtn('shipLeave',    ()=>disembarkShip());
@@ -6751,7 +6857,7 @@ function setupJoystick(id,knobId,cb){
   el.addEventListener('touchend',end,{passive:false}); el.addEventListener('touchcancel',end,{passive:false});
 }
 // cycle through owned weapons (used by touch + keyboard)
-const ALL_WEAPONS=['fists','pistol','shotgun','smg','rifle','sniper','rpg','grenade','molotov','flamethrower'];
+const ALL_WEAPONS=['fists','pistol','magnum','shotgun','autoshotgun','smg','mac10','rifle','carbine','lmg','minigun','sniper','marksman','railgun','rpg','grenadelauncher','grenade','molotov','flamethrower'];
 function cycleWeapon(){
   const owned=ALL_WEAPONS.filter(w=>G.player.weapons[w]);
   if(!owned.length) return;
@@ -7063,12 +7169,13 @@ function removeVehicle(v){
   G.scene.remove(v); const i=G.vehicles.indexOf(v); if(i>=0) G.vehicles.splice(i,1);
 }
 function updatePolice(dt){
-  const target=G.player.inVehicle?G.player.inVehicle:G.player.mesh;
+  const onShip=G.player.onShip;
+  const target = onShip ? onShip.group : (G.player.inVehicle?G.player.inVehicle:G.player.mesh);
   const p=target.position;
   // player velocity (for predictive intercept)
-  const pv = G.player.inVehicle ?
+  const pv = onShip ? {x:0,z:0} : (G.player.inVehicle ?
     {x:-Math.sin(G.player.inVehicle.rotation.y)*G.player.inVehicle.userData.speed, z:-Math.cos(G.player.inVehicle.rotation.y)*G.player.inVehicle.userData.speed}
-    : {x:G.player.vx||0,z:G.player.vz||0};
+    : {x:G.player.vx||0,z:G.player.vz||0});
   const speedHint=Math.hypot(pv.x,pv.z)||1;
   G.police.forEach((v,idx)=>{
     const ud=v.userData;
@@ -7158,10 +7265,11 @@ function updatePolice(dt){
 // On-foot officers: flank → close in → arrest or kill. Riot shields block frontal bullets.
 function updateCops(dt){
   if(!G.copsOnFoot.length) return;
-  const onFoot=!G.player.inVehicle;
+  const onFoot=!G.player.inVehicle && !G.player.onShip;
   const pp=G.player.mesh.position;
-  const px=G.player.inVehicle?G.player.inVehicle.position.x:pp.x;
-  const pz=G.player.inVehicle?G.player.inVehicle.position.z:pp.z;
+  const tp=threatPos();
+  const px=tp.x;
+  const pz=tp.z;
   for(let i=G.copsOnFoot.length-1;i>=0;i--){
     const c=G.copsOnFoot[i];
     if(c.hp<=0){ G.scene.remove(c.mesh); G.copsOnFoot.splice(i,1); continue; }
@@ -7251,8 +7359,14 @@ function hasLOS(a,b){
 // clear line of sight; accuracy falls off with distance. Returns true if a shot
 // was actually fired (used to gate the shooter's cooldown). Fixes "shoot from
 // anywhere / hit you across the map".
+// Where enemies should aim/drive: the commandeered ship when you're aboard one,
+// otherwise your vehicle or your body. Stealing a warship makes you THE target.
+function threatPos(){
+  if(G.player.onShip) return G.player.onShip.group.position;
+  return G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
+}
 function aiTryShoot(fromPos, range, baseDmg, accuracy, sound){
-  const p=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
+  const p=threatPos();
   const d=Math.hypot(p.x-fromPos.x,p.z-fromPos.z);
   if(d>range) return false;                 // out of range — no hit possible
   if(!hasLOS(fromPos,p)) return false;       // wall between us — blocked
@@ -7413,8 +7527,8 @@ function spawnBoat(){
 }
 function updateBoats(dt){
   G.boats=G.boats||[];
-  const p=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
-  const nearWater = p.z < -G.CITY/2+50;
+  const p=threatPos();
+  const nearWater = (G.player.onShip&&G.player.onShip.kind==='destroyer') ? true : p.z < -G.CITY/2+50;
   if(nearWater && G.wanted>0 && G.boats.length<1) spawnBoat();
   for(let i=G.boats.length-1;i>=0;i--){ const b=G.boats[i];
     if(b.owned) continue;   // you've taken command of this one
@@ -7471,7 +7585,7 @@ function updateJets(dt){
   G.jetCD=(G.jetCD||0)-dt;
   const cap=LOW?2:8;   // toward a "squadron" while staying performant
   if(want>=5 && G.jets.length<cap && G.jetCD<=0){ const r=Math.random(); spawnJet(r<0.55?'a10':(r<0.8?'f16':'f35')); G.jetCD=rand(1.5,3.5); }
-  const p=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
+  const p=threatPos();
   for(let i=G.jets.length-1;i>=0;i--){ const j=G.jets[i]; j.life-=dt;
     j.group.position.x+=j.dir.x*j.speed*dt; j.group.position.z+=j.dir.z*j.speed*dt;
     if(Math.random()<0.5) G.particles.spawn(j.group.position.x-j.dir.x*4,j.group.position.y,j.group.position.z-j.dir.z*4,'smoke');
@@ -7655,8 +7769,21 @@ function updateBullets(dt){
       if(b.life<=0){ G.scene.remove(b.mesh); G.bullets.splice(i,1); }
       continue;
     }
+    if(b.type==='beam'){   // railgun beam: a quick bright fade
+      if(b.mesh.material) b.mesh.material.opacity=Math.max(0,b.life*4);
+      if(b.life<=0){ G.scene.remove(b.mesh); G.bullets.splice(i,1); }
+      continue;
+    }
+    if(b.type==='torpedo'){   // skims the water toward shore, big blast
+      b.mesh.position.x+=b.vx*dt; b.mesh.position.z+=b.vz*dt; b.mesh.position.y=0.3;
+      if(Math.random()<0.6) G.particles.spawn(b.mesh.position.x,0.4,b.mesh.position.z,'smoke');
+      let hit=false;
+      for(const v of G.police){ if(!v.userData.burned && Math.hypot(v.position.x-b.mesh.position.x,v.position.z-b.mesh.position.z)<3.5){ hit=true; break; } }
+      if(hit || b.life<=0 || b.mesh.position.z>-G.CITY/2){ createExplosion(b.mesh.position.x,0.6,b.mesh.position.z,b.blastR,b.blastDmg); G.scene.remove(b.mesh); G.bullets.splice(i,1); }
+      continue;
+    }
     if(b.type==='homing'){
-      const p=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
+      const p=threatPos();
       // steer toward the player with a limited turn rate so you can out-run/juke it
       const cur=new THREE.Vector3(b.vx,0,b.vz); const sp=cur.length()||1;
       const want=new THREE.Vector3(p.x-b.mesh.position.x,0,p.z-b.mesh.position.z).normalize();
