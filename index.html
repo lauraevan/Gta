@@ -4676,14 +4676,28 @@ function makeDestroyer(x,z,cram){
     g.add(cramMesh);
   }
   g.position.set(x,0,z); g.rotation.y=rand(-0.2,0.2); G.scene.add(g);
-  G.destroyers.push({group:g,turret,cram:!!cram,cramMesh,rocketCD:rand(2,5),cramCD:0,baseY:0,phase:Math.random()*9});
+  // ships are extremely tanky and hard to kill
+  G.destroyers.push({group:g,turret,cram:!!cram,cramMesh,rocketCD:rand(2,5),cramCD:0,baseY:0,phase:Math.random()*9,
+    kind:'destroyer', owned:false, hp:9000, maxHp:9000, speed:0, atHelm:false,
+    aa:[], aaCD:0, missileCD:0, cramPDCD:0, deckLocal:{x:0,z:12}, name:'USS DESTROYER',
+    deck:{minX:-4.4,maxX:4.4,minZ:-20.5,maxZ:20.5,y:5.05}, helmLocal:{x:0,z:-15}});
+}
+// A dual-barrel anti-air mount that rotates to track aircraft.
+function buildAAMount(){
+  const m=new THREE.Group();
+  const base=new THREE.Mesh(new THREE.CylinderGeometry(0.7,0.9,0.5,10),new THREE.MeshStandardMaterial({color:0x3a4048,metalness:0.4,roughness:0.6})); m.add(base);
+  const yoke=new THREE.Group(); yoke.position.y=0.5; m.add(yoke); m.userData.yoke=yoke;
+  [-0.25,0.25].forEach(bx=>{ const bar=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.1,2.4,8),new THREE.MeshStandardMaterial({color:0x161616})); bar.rotation.x=Math.PI/2; bar.position.set(bx,0.2,1.1); yoke.add(bar); });
+  m.traverse(o=>{ if(o.isMesh) o.castShadow=!LOW; });
+  return m;
 }
 function updateDestroyers(dt){
   if(!G.destroyers||!G.destroyers.length) return;
   const p=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
   const nearWater = p.z < -G.CITY/2+70;
   G.destroyers.forEach(d=>{
-    d.phase+=dt; d.group.position.y=Math.sin(d.phase*0.6)*0.3;          // gentle bob
+    d.phase+=dt; if(!d.atHelm) d.group.position.y=Math.sin(d.phase*0.6)*0.3;   // gentle bob (helm handles its own y)
+    if(d.owned){ updateOwnedShip(d,dt); return; }
     if(!nearWater || G.wanted<2) return;
     const dx=p.x-d.group.position.x, dz=p.z-d.group.position.z, dist=Math.hypot(dx,dz);
     // aim turret
@@ -4700,6 +4714,217 @@ function updateDestroyers(dt){
       if(d.cramMesh) d.cramMesh.rotation.y+=0.6;
     } }
   });
+}
+// ---- A ship you've taken over: AI CRAM, auto-missiles, AA turrets fight for you ----
+function shipWorldPos(d){ return d.group.position; }
+function nearestGroundEnemyTo(pos,range){
+  let best=null,bd=range;
+  const consider=(o,m)=>{ const d=Math.hypot(m.x-pos.x,m.z-pos.z); if(d<bd){bd=d;best={o,pos:m};} };
+  G.police.forEach(pc=>{ if(!pc.userData.burned) consider(pc,pc.position); });
+  G.copsOnFoot.forEach(c=>consider(c,c.mesh.position));
+  return best;
+}
+function nearestAirEnemyTo(pos,range){
+  let best=null,bd=range;
+  (G.jets||[]).forEach(j=>{ const d=Math.hypot(j.group.position.x-pos.x,j.group.position.z-pos.z); if(d<bd){bd=d;best={air:'jet',j,pos:j.group.position};} });
+  if(G.heli && !G.heli.crashing){ const h=G.heli; const d=Math.hypot(h.group.position.x-pos.x,h.group.position.z-pos.z); if(d<bd){bd=d;best={air:'heli',h,pos:h.group.position};} }
+  return best;
+}
+function updateOwnedShip(d,dt){
+  const sp=d.group.position;
+  // --- AUTO MISSILE SYSTEM: salvos at the nearest ground threat ---
+  d.missileCD-=dt;
+  const gt=nearestGroundEnemyTo(sp,260);
+  if(gt && d.missileCD<=0){ d.missileCD=rand(1.6,2.6);
+    if(d.turret){ const ta=Math.atan2(gt.pos.x-sp.x,gt.pos.z-sp.z); d.turret.rotation.y=lerp2angle(d.turret.rotation.y,ta,0.5); }
+    fireSalvo({x:sp.x,y:6.5,z:sp.z}, gt.pos, 3, 0.7);   // owned salvos hit enemies via explosion damage
+    G.audio.explosion();
+  }
+  // --- AI CRAM: point-defence shreds the nearest enemy rocket + peppers nearby foes ---
+  if(d.cramMesh) d.cramMesh.rotation.y+=0.5;
+  d.cramPDCD-=dt;
+  if(d.cramPDCD<=0){ d.cramPDCD=0.05;
+    // shoot down the closest incoming enemy missile (anti-ship rockets + homing)
+    let pb=null,pbd=80;
+    (G.bullets||[]).forEach(b=>{ if(!b.mesh||b.dead) return; if(!(b.antiShip||b.type==='homing')) return;
+      const dd=Math.hypot(b.mesh.position.x-sp.x,b.mesh.position.z-sp.z); if(dd<pbd){pbd=dd;pb=b;} });
+    if(pb){ pb.dead=true; G.particles.burst(pb.mesh.position.x,pb.mesh.position.y,pb.mesh.position.z,'spark',5); if(Math.random()<0.3) G.audio.gunshot('smg'); }
+    // and rake the nearest close ground enemy
+    const cg=nearestGroundEnemyTo(sp,90);
+    if(cg){ if(cg.o.userData){ damageVehicle(cg.o,3); } else { cg.o.hp-=3; if(cg.o.hp<=0) killCop(cg.o); }
+      G.particles.burst(cg.pos.x,1,cg.pos.z,'spark',2); }
+  }
+  // --- AI ANTI-AIR TURRETS: track + gun down jets/helis ---
+  d.aaCD-=dt;
+  const at=nearestAirEnemyTo(sp,240);
+  d.aa.forEach(mount=>{ if(at && mount.userData.yoke){ const local=mount.parent.worldToLocal(at.pos.clone());
+      mount.rotation.y=lerp2angle(mount.rotation.y, Math.atan2(local.x,local.z), 0.2); } });
+  if(at && d.aaCD<=0){ d.aaCD=0.12;
+    const o=new THREE.Vector3(sp.x,8,sp.z);
+    const dir=new THREE.Vector3(at.pos.x-o.x,at.pos.y-o.y,at.pos.z-o.z).normalize();
+    spawnTracer(o,dir);
+    if(Math.random()<0.5) G.audio.gunshot('rifle');
+    if(Math.random()<0.45){ if(at.air==='heli') damageHeli(8); else damageJet(at.j,10); G.particles.burst(at.pos.x,at.pos.y,at.pos.z,'spark',3); }
+  }
+  // --- enemy anti-ship rocket cars fire on the ship ---
+  G.police.forEach(pc=>{ if(!pc.userData.antiShip||pc.userData.burned) return;
+    pc.userData.antiShipCD=(pc.userData.antiShipCD||rand(1,3))-dt;
+    if(pc.userData.antiShipCD<=0){ pc.userData.antiShipCD=rand(2.5,4.5);
+      const dd=Math.hypot(pc.position.x-sp.x,pc.position.z-sp.z); if(dd<220){
+        const o=new THREE.Vector3(pc.position.x,1.6,pc.position.z);
+        const dir=new THREE.Vector3(sp.x-o.x,6-o.y,sp.z-o.z).normalize();
+        spawnRocket(o,dir,{explosive:true,antiShip:true}); G.audio.explosion();
+      }
+    }
+  });
+}
+function damageJet(j,dmg){
+  if(!j) return; j.hp=(j.hp==null?30:j.hp)-dmg;
+  if(j.hp<=0){ createExplosion(j.group.position.x,j.group.position.y,j.group.position.z,8,20);
+    G.scene.remove(j.group); const i=G.jets.indexOf(j); if(i>=0) G.jets.splice(i,1); G.money+=150; bigMsg('JET DOWN','#ff8800'); }
+}
+function damageOwnedShip(dmg){
+  const d=G.player.onShip; if(!d||d.kind!=='destroyer') return;
+  d.hp-=dmg; G.shake=Math.min(1.0,(G.shake||0)+0.25);
+  if(d.hp<=0){ d.hp=0; sinkOwnedShip(); }
+}
+function sinkOwnedShip(){
+  const d=G.player.onShip; if(!d) return;
+  bigMsg('SHIP DESTROYED','#ff3333');
+  createExplosion(d.group.position.x,5,d.group.position.z,16,40);
+  // eject the player onto shore
+  disembarkShip(true);
+}
+// ---- Boarding & commanding watercraft ----
+function tryBoardShip(){
+  const p=G.player.mesh.position;
+  const nearWater = p.z < -G.CITY/2-5;
+  let best=null,bd=1e9,kind=null;
+  (G.destroyers||[]).forEach(d=>{ if(d.owned) return; const reach=nearWater?160:18;
+    const dd=Math.hypot(d.group.position.x-p.x,d.group.position.z-p.z);
+    if(dd<reach && dd<bd){ best=d; bd=dd; kind='destroyer'; } });
+  (G.boats||[]).forEach(b=>{ if(b.owned) return; const reach=nearWater?90:8;
+    const dd=Math.hypot(b.group.position.x-p.x,b.group.position.z-p.z);
+    if(dd<reach && dd<bd){ best=b; bd=dd; kind='boat'; } });
+  if(!best) return false;
+  if(kind==='destroyer') boardDestroyer(best); else boardBoat(best);
+  return true;
+}
+function boardDestroyer(d){
+  d.owned=true; d.atHelm=false; d.deckLocal={x:0,z:9};
+  d.missileCD=1; d.aaCD=0; d.cramPDCD=0;
+  // retrofit: ensure a CRAM + add anti-air mounts + a helm pad
+  if(!d.cram){ d.cram=true; d.cramMesh=new THREE.Group(); d.cramMesh.position.set(0,11,8);
+    const dome=new THREE.Mesh(new THREE.CylinderGeometry(1.2,1.4,1.2,10),new THREE.MeshStandardMaterial({color:0xeeeeee})); d.cramMesh.add(dome);
+    const gat=new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.3,2.4,8),new THREE.MeshStandardMaterial({color:0x333333})); gat.rotation.x=Math.PI/2; gat.position.set(0,0.4,1.4); d.cramMesh.add(gat);
+    d.group.add(d.cramMesh); }
+  if(!d.aa.length){ [[-3.4,-9],[3.4,-9],[0,18.5]].forEach(([lx,lz])=>{ const m=buildAAMount(); m.position.set(lx,5.3,lz); d.group.add(m); d.aa.push(m); }); }
+  if(!d.helmPad){ d.helmPad=new THREE.Mesh(new THREE.CircleGeometry(1.5,20),new THREE.MeshBasicMaterial({color:0x33ddff,transparent:true,opacity:0.5,side:THREE.DoubleSide}));
+    d.helmPad.rotation.x=-Math.PI/2; d.helmPad.position.set(d.helmLocal.x,5.12,d.helmLocal.z); d.group.add(d.helmPad); }
+  G.player.onShip=d; G.player.mesh.visible=true; G.player.inVehicle=null; G.player.inAircraft=null;
+  placePlayerOnDeck(d);
+  showVehName(d.name); addWanted(3);
+  toast('Boarded the destroyer — walk the deck. Stand on the glowing HELM pad + ACTION to steer. CRAM/AA/missiles auto-fight.');
+}
+function boardBoat(b){
+  b.owned=true; b.kind='boat'; b.speed=0; b.hp=400; b.maxHp=400; b.fireCD=0;
+  G.player.onShip=b; G.player.mesh.visible=false; G.player.inVehicle=null;
+  showVehName('POLICE BOAT'); addWanted(2);
+  toast('Commandeered the police boat — W/S throttle, A/D steer, hold FIRE for the turret.');
+}
+function placePlayerOnDeck(d){
+  const w=d.group.localToWorld(new THREE.Vector3(d.deckLocal.x,d.deck.y,d.deckLocal.z));
+  G.player.mesh.position.copy(w);
+}
+function toggleHelm(){
+  const d=G.player.onShip; if(!d||d.kind!=='destroyer') return;
+  if(d.atHelm){ d.atHelm=false; toast('Stepped away from the helm.'); return; }
+  if(Math.hypot(d.deckLocal.x-d.helmLocal.x, d.deckLocal.z-d.helmLocal.z)<2.4){ d.atHelm=true; toast('At the helm — W/S throttle, A/D steer, ACTION to step away.'); }
+  else toast('Stand on the glowing HELM pad to take the wheel.');
+}
+function disembarkShip(eject){
+  const d=G.player.onShip; if(!d) return;
+  const sx=d.group.position.x, sz=d.group.position.z;
+  if(d.kind==='destroyer'){ d.atHelm=false; d.owned=false; }
+  if(d.kind==='boat'){ // remove the commandeered boat
+    G.scene.remove(d.group); const bi=(G.boats||[]).indexOf(d); if(bi>=0) G.boats.splice(bi,1); }
+  // step off onto the nearest shore/dock
+  G.player.mesh.position.set(clamp(sx,-G.CITY/2,G.CITY/2), 0, -G.CITY/2-26);
+  G.player.rotY=Math.PI; G.player.mesh.visible=true; G.player.onShip=null;
+  G.audio.stopEngine();
+  if(!eject) toast('Left the ship.');
+}
+// Per-frame control while you're aboard a ship (replaces updatePlayer)
+function updateShip(dt){
+  const d=G.player.onShip; if(!d) return;
+  if(d.kind==='boat') updatePilotBoat(d,dt); else updateShipDeck(d,dt);
+}
+function updateShipDeck(d,dt){
+  const pl=G.player, g=d.group;
+  if(pl.fireCD>0) pl.fireCD-=dt;
+  if(pl.invuln>0) pl.invuln-=dt;
+  if(G.mouse.down && WEAPONS[pl.weapon].auto) firePrimary();
+  if(d.atHelm){
+    let thr=0,turn=0;
+    if(keys['w'])thr+=1; if(keys['s'])thr-=1; if(keys['a'])turn+=1; if(keys['d'])turn-=1;
+    if(touch.move.active){ thr+=-touch.move.y; turn+=-touch.move.x; }
+    d.speed=clamp(d.speed+thr*8*dt, -6, 14); d.speed*=0.996;
+    g.rotation.y += turn*0.35*dt;
+    const fx=-Math.sin(g.rotation.y), fz=-Math.cos(g.rotation.y);
+    g.position.x=clamp(g.position.x+fx*d.speed*dt, -G.CITY/2-60, G.CITY/2+60);
+    g.position.z=clamp(g.position.z+fz*d.speed*dt, -G.CITY/2-150, -G.CITY/2-8);
+    d.deckLocal.x=d.helmLocal.x; d.deckLocal.z=d.helmLocal.z;
+  } else {
+    let fwd=0,strafe=0;
+    if(keys['w'])fwd+=1; if(keys['s'])fwd-=1; if(keys['a'])strafe-=1; if(keys['d'])strafe+=1;
+    if(touch.move.active){ fwd+=-touch.move.y; strafe+=touch.move.x; }
+    pl.running=keys['shift'];
+    const speed=pl.running?6:3;
+    const moving=(fwd||strafe)!==0;
+    if(moving){
+      const ang=G.camOrbit.theta+Math.atan2(strafe,fwd)+Math.PI;
+      if(!G.aiming) pl.rotY=ang;
+      const cur=g.localToWorld(new THREE.Vector3(d.deckLocal.x,d.deck.y,d.deckLocal.z));
+      cur.x+=Math.sin(ang)*speed*dt; cur.z+=Math.cos(ang)*speed*dt;
+      const loc=g.worldToLocal(cur);
+      d.deckLocal.x=clamp(loc.x,d.deck.minX,d.deck.maxX);
+      d.deckLocal.z=clamp(loc.z,d.deck.minZ,d.deck.maxZ);
+      pl.footTimer-=dt; if(pl.footTimer<=0){ G.audio.footstep(); pl.footTimer=pl.running?0.25:0.35; }
+    }
+    pl.walkPhase+=dt;
+    if(!animatePunch(pl.mesh,dt)) animateHumanoid(pl.mesh,pl.walkPhase,moving,pl.running);
+  }
+  // ride the (possibly moving) deck
+  const w=g.localToWorld(new THREE.Vector3(d.deckLocal.x,d.deck.y,d.deckLocal.z));
+  pl.mesh.position.copy(w); pl.mesh.rotation.y=pl.rotY;
+  updateHeldWeapon();
+  if(d.helmPad) d.helmPad.material.opacity=0.3+Math.abs(Math.sin(performance.now()*0.003))*0.3;
+  UI.speed.textContent='HULL '+Math.max(0,Math.round(d.hp/d.maxHp*100))+'%  ·  '+(d.atHelm?Math.round(Math.abs(d.speed)*2.23)+' kn':'ON DECK');
+  UI.speed.style.opacity=1;
+}
+function updatePilotBoat(d,dt){
+  const g=d.group;
+  let thr=0,turn=0;
+  if(keys['w'])thr+=1; if(keys['s'])thr-=1; if(keys['a'])turn+=1; if(keys['d'])turn-=1;
+  if(touch.move.active){ thr+=-touch.move.y; turn+=-touch.move.x; }
+  d.speed=clamp(d.speed+thr*14*dt, -8, 26); d.speed*=0.99;
+  g.rotation.y += turn*1.1*dt;
+  const fx=-Math.sin(g.rotation.y), fz=-Math.cos(g.rotation.y);
+  g.position.x=clamp(g.position.x+fx*d.speed*dt, -G.CITY/2-80, G.CITY/2+80);
+  g.position.z=clamp(g.position.z+fz*d.speed*dt, -G.CITY/2-160, -G.CITY/2-4);
+  g.position.y=-0.1+Math.sin(performance.now()*0.002)*0.2;
+  d.fireCD=(d.fireCD||0)-dt;
+  if(G.mouse.down && d.fireCD<=0){ d.fireCD=0.45;
+    const gt=nearestGroundEnemyTo(g.position,130);
+    const o=new THREE.Vector3(g.position.x,1.6,g.position.z);
+    const dir = gt? new THREE.Vector3(gt.pos.x-o.x,0.02,gt.pos.z-o.z).normalize() : new THREE.Vector3(fx,0,fz);
+    if(d.turret){ const ta=Math.atan2(dir.x,dir.z); d.turret.rotation.y=lerp2angle(d.turret.rotation.y,ta,0.5); }
+    hitscan(o,dir,130,18); spawnTracer(o,dir); G.audio.gunshot('rifle');
+    G.particles.burst(o.x+dir.x*1.5,o.y,o.z+dir.z*1.5,'muzzle',2);
+  }
+  G.audio.setEngine(Math.abs(d.speed),26);
+  UI.speed.textContent=Math.round(Math.abs(d.speed)*2.23)+' kn  ·  POLICE BOAT';
+  UI.speed.style.opacity=1;
 }
 
 // =================== AIRFIELD & FLYABLE AIRCRAFT ===================
@@ -5528,6 +5753,10 @@ function spawnPoliceCar(){
   v.userData.maxSpeed=v.userData.maxSpeed*0.58;   // police cars are a lot slower now
   v.userData.flank=rand(-1,1); // surround offset, radians around target
   v.userData.shootCD=rand(0.5,2);
+  // 15% of police vehicles pack an anti-ship rocket gun (a real threat to a commandeered ship)
+  if(Math.random()<0.15){ v.userData.antiShip=true; v.userData.antiShipCD=rand(1,3);
+    const tube=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,1.8,8),new THREE.MeshStandardMaterial({color:0x1c1c1c,metalness:0.4,roughness:0.6}));
+    tube.rotation.x=Math.PI/2.4; tube.position.set(0.35,(v.userData.H||1)+0.5,-0.2); v.add(tube); }
   v.userData.tank=!!opts.tank; v.userData.abrams=!!opts.abrams; v.userData.rockets=!!(opts.rockets||opts.tank); v.userData.doubleCannon=!!opts.doubleCannon;
   if(opts.tank){ v.userData.health=opts.abrams?520:(opts.doubleCannon?420:300); v.userData.maxSpeed=opts.abrams?13:(opts.doubleCannon?10:12); }
   if(opts.armored){ v.userData.health=260; v.userData.armored=true; }
@@ -5587,6 +5816,9 @@ function createExplosion(x,y,z,radius,dmg){
   G.vehicles.concat(G.police).forEach(v=>{ const d=Math.hypot(v.position.x-x,v.position.z-z); if(d<radius&&!v.userData.burned){ damageVehicle(v,dmg); }});
   // explosions ignore riot shields
   for(let i=G.copsOnFoot.length-1;i>=0;i--){ const c=G.copsOnFoot[i]; const d=Math.hypot(c.mesh.position.x-x,c.mesh.position.z-z); if(d<radius){ c.hp-=dmg; if(c.hp<=0) killCop(c); } }
+  // your commandeered ship is extremely tanky but still takes a beating from blasts that land on it
+  if(G.player.onShip && G.player.onShip.kind==='destroyer'){ const s=G.player.onShip.group.position;
+    if(Math.hypot(s.x-x,s.z-z)<radius+16) damageOwnedShip(dmg*1.6); }
 }
 
 // =================== DAMAGE ===================
@@ -5894,8 +6126,9 @@ function spawnRocket(origin,dir,opts){
   grp.userData.flame=flame;
   const o=origin.clone().add(dir.clone().multiplyScalar(3));
   grp.position.copy(o); G.scene.add(grp);
-  G.bullets.push({mesh:grp,vx:dir.x*(opts.power?60:45),vy:dir.y*(opts.power?60:45),vz:dir.z*(opts.power?60:45),life:5,type:'rocket',armT:0.08,
-    blastR: opts.power?30:(ex?22:13), blastDmg: opts.power?170:(ex?110:70), explosive:ex, flame});
+  const aship=!!opts.antiShip;
+  G.bullets.push({mesh:grp,vx:dir.x*(opts.power?60:45),vy:dir.y*(opts.power?60:45),vz:dir.z*(opts.power?60:45),life:aship?6:5,type:'rocket',armT:0.08,
+    blastR: opts.power?30:(aship?24:(ex?22:13)), blastDmg: opts.power?170:(aship?120:(ex?110:70)), explosive:ex, antiShip:aship, flame});
 }
 // Heat-seeking missile: tracks the player, must be out-maneuvered. 5-star only.
 function spawnHoming(origin){
@@ -6166,10 +6399,13 @@ gameDiv.addEventListener('click',()=>{ if(G.started && !G.paused && !isTouch && 
 
 function tryEnterExit(){
   if(!G.started) return;
+  if(G.player.onShip){ disembarkShip(); return; }
   if(G.player.inAircraft){ exitAircraft(); return; }
   if(G.player.inVehicle){ exitVehicle(); return; }
   // a parked aircraft at the airfield takes priority when close
   const ac=nearestAircraft(5); if(ac){ enterAircraft(ac); return; }
+  // board / take command of a nearby destroyer or police boat
+  if(tryBoardShip()) return;
   const v=nearestVehicle(3); if(v) enterVehicle(v);
 }
 function nearestAircraft(maxd){
@@ -6178,6 +6414,8 @@ function nearestAircraft(maxd){
   return best;
 }
 function tryInteract(){
+  // aboard a destroyer: ACTION grips/releases the helm
+  if(G.player.onShip){ toggleHelm(); return; }
   // an open shop panel (hospital/ammu/food) → close it (works on mobile)
   if(shopOpen){ closeShop(); return; }
   // inside a store → leave
@@ -6374,6 +6612,16 @@ function updateCamera(dt){
     cam.lookAt(g.position.x,g.position.y+0.5,g.position.z);
     const targetFov=62+ (Math.abs(ac.speed)/ac.maxSpeed)*16;
     cam.fov=lerp(cam.fov,targetFov,0.05); cam.updateProjectionMatrix();
+    return;
+  }
+  if(G.player.onShip && G.player.onShip.kind==='boat'){
+    const g=G.player.onShip.group, ry=g.rotation.y;
+    const back=11, up=5;
+    cam.position.x=lerp(cam.position.x,g.position.x+Math.sin(ry)*back,0.08);
+    cam.position.z=lerp(cam.position.z,g.position.z+Math.cos(ry)*back,0.08);
+    cam.position.y=lerp(cam.position.y,g.position.y+up,0.1);
+    cam.lookAt(g.position.x,g.position.y+1,g.position.z);
+    cam.fov=lerp(cam.fov,62,0.05); cam.updateProjectionMatrix();
     return;
   }
   if(G.player.inVehicle){
@@ -6920,7 +7168,7 @@ function spawnJet(type){
   g.position.set(sx, type==='a10'?34:(type==='f35'?58:52), sz); g.rotation.y=Math.atan2(dir.x,dir.z);
   G.scene.add(g);
   G.jets=G.jets||[];
-  G.jets.push({group:g,dir,speed:type==='a10'?72:(type==='f35'?112:95),life:14,type,strafeCD:0,bombed:false});
+  G.jets.push({group:g,dir,speed:type==='a10'?72:(type==='f35'?112:95),life:14,type,strafeCD:0,bombed:false,hp:type==='a10'?40:30});
 }
 // ---- Police barricades: blockades you can shoot down ----
 function spawnBarricade(x,z,ang){
@@ -6976,6 +7224,7 @@ function updateBoats(dt){
   const nearWater = p.z < -G.CITY/2+50;
   if(nearWater && G.wanted>0 && G.boats.length<1) spawnBoat();
   for(let i=G.boats.length-1;i>=0;i--){ const b=G.boats[i];
+    if(b.owned) continue;   // you've taken command of this one
     if(!nearWater || G.wanted<=0){ G.scene.remove(b.group); G.boats.splice(i,1); continue; }
     // stay on the water but track the player's x, keep south
     const tx=clamp(p.x,-G.CITY/2,G.CITY/2), tz=Math.min(p.z-12,-G.CITY/2-20);
@@ -7207,6 +7456,7 @@ function allyShoot(pe){
 function updateBullets(dt){
   for(let i=G.bullets.length-1;i>=0;i--){
     const b=G.bullets[i]; b.life-=dt;
+    if(b.dead){ if(b.mesh) G.scene.remove(b.mesh); G.bullets.splice(i,1); continue; }   // intercepted by CRAM
     if(b.type==='tracer'){
       b.mesh.position.x+=b.vx*dt; b.mesh.position.y+=b.vy*dt; b.mesh.position.z+=b.vz*dt;
       if(b.life<=0){ G.scene.remove(b.mesh); G.bullets.splice(i,1); }
@@ -7249,6 +7499,7 @@ function updateBullets(dt){
         for(const v of G.vehicles.concat(G.police)){ if(Math.hypot(v.position.x-b.mesh.position.x,v.position.z-b.mesh.position.z)<2.5){ explode=true; break; } }
         for(const pe of G.peds){ if(!pe.dead&&Math.hypot(pe.mesh.position.x-b.mesh.position.x,pe.mesh.position.z-b.mesh.position.z)<2){ explode=true; break; } }
         if(!explode){ const pp=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position; if(Math.hypot(pp.x-b.mesh.position.x,pp.z-b.mesh.position.z)<2 && b.mesh.position.y<3) explode=true; }
+        if(!explode && b.antiShip && G.player.onShip && G.player.onShip.kind==='destroyer'){ const s=G.player.onShip.group.position; if(Math.hypot(s.x-b.mesh.position.x,s.z-b.mesh.position.z)<7) explode=true; }
         if(!explode && G.heli && !G.heli.crashing){ const hp2=G.heli.group.position; if(Math.hypot(hp2.x-b.mesh.position.x,hp2.z-b.mesh.position.z)<4 && Math.abs(hp2.y-b.mesh.position.y)<5){ damageHeli(60); explode=true; } }
       }
     }
@@ -7444,7 +7695,7 @@ function loop(now){
   if(G.started && !G.paused && !shopOpen){
     const sdt=dt*G.timeScale;
     const t=now/1000;
-    if(G.player.inAircraft) updateAircraft(sdt); else updatePlayer(sdt,t);
+    if(G.player.inAircraft) updateAircraft(sdt); else if(G.player.onShip) updateShip(sdt); else updatePlayer(sdt,t);
     // slow health regen (player buff): regenerates after a few seconds without damage
     if(G.player.regenT>0) G.player.regenT-=sdt;
     else if(G.player.hp>0 && G.player.hp<G.player.maxHp) G.player.hp=Math.min(G.player.maxHp,G.player.hp+8*sdt);
