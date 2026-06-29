@@ -4486,7 +4486,49 @@ function makeBuilding(x,z,w,d,h,opts){
       wl.position.set(x,h+8,z); G.scene.add(wl); m.userData.beacon=wl;
     }
   }
+  // cozy: a glowing neon sign on a fraction of mid-rise buildings
+  if(h>13 && h<80 && Math.random()<(LOW?0.12:0.26)) makeNeonSign(x,z,w,d,h);
+  // cozy: warm storefront — awning + glowing shop window at street level
+  if(h>13 && Math.random()<(LOW?0.16:0.34)) makeStorefront(x,z,w,d);
   return m;
+}
+// Shared neon palette (vibrant + warm). Each sign is ONE emissive mesh; they
+// brighten at night via updateDayNight (stored in G.neonSigns).
+const NEON_COLORS=[0xff4d8d,0x35e6ff,0xffcf3a,0xff7a1a,0x7df04a,0xb45cff,0xff3b3b];
+function makeNeonSign(x,z,w,d,h){
+  G.neonSigns=G.neonSigns||[];
+  const col=choice(NEON_COLORS);
+  const side=randi(0,3);                       // which facade the sign sits on
+  const sw=rand(2.2,Math.min(5,w*0.7)), sh=rand(0.8,1.7);
+  const py=rand(4,Math.min(h-2,22));
+  const mat=new THREE.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.25,roughness:0.4});
+  const g=new THREE.Mesh(new THREE.BoxGeometry(side<2?0.25:sw, sh, side<2?sw:0.25), mat);
+  const off=0.25;
+  if(side===0) g.position.set(x+w/2+off,py,z+rand(-d/4,d/4));
+  else if(side===1) g.position.set(x-w/2-off,py,z+rand(-d/4,d/4));
+  else if(side===2) g.position.set(x+rand(-w/4,w/4),py,z+d/2+off);
+  else g.position.set(x+rand(-w/4,w/4),py,z-d/2-off);
+  G.scene.add(g);
+  G.neonSigns.push({mesh:g,base:col,flick:Math.random()<0.25,phase:rand(0,TAU)});
+}
+function makeStorefront(x,z,w,d){
+  const aw=choice([0xc0392b,0x2e7d4f,0x2c6e9e,0xb8862b,0x8e44ad]);
+  const awn=new THREE.MeshStandardMaterial({color:aw,roughness:0.85});
+  // pick a street-facing side and run an awning + a softly glowing window band
+  const side=randi(0,3);
+  const horiz=(side>=2);
+  const span=(horiz?w:d)*0.8;
+  const awning=new THREE.Mesh(new THREE.BoxGeometry(horiz?span:1.4, 0.3, horiz?1.4:span), awn);
+  // warm glowing shop window (emissive, lit a little even by day, more at night)
+  const glow=new THREE.MeshStandardMaterial({color:0xffe6b0,emissive:0xffcf80,emissiveIntensity:0.35,roughness:0.5});
+  const win=new THREE.Mesh(new THREE.BoxGeometry(horiz?span:0.2, 2.2, horiz?0.2:span), glow);
+  const ex=w/2+0.15, ez=d/2+0.15;
+  if(side===0){ awning.position.set(x+ex+0.5,3.0,z); win.position.set(x+ex,1.5,z); }
+  else if(side===1){ awning.position.set(x-ex-0.5,3.0,z); win.position.set(x-ex,1.5,z); }
+  else if(side===2){ awning.position.set(x,3.0,z+ez+0.5); win.position.set(x,1.5,z+ez); }
+  else { awning.position.set(x,3.0,z-ez-0.5); win.position.set(x,1.5,z-ez); }
+  awning.castShadow=!LOW; G.scene.add(awning); G.scene.add(win);
+  G.neonSigns=G.neonSigns||[]; G.neonSigns.push({mesh:win,base:0xffcf80,flick:false,phase:0,store:true});
 }
 
 /* ---------- Tree variety ---------- */
@@ -7278,6 +7320,14 @@ function updateDayNight(dt){
   const winI=night?1.0:0;
   G.buildings.forEach(b=>{ if(b.userData.winMat) b.userData.winMat.emissiveIntensity=lerp(b.userData.winMat.emissiveIntensity||0,winI,0.05);
     if(b.userData.beacon){ const f=Math.floor(performance.now()/600)%2; b.userData.beacon.material.emissiveIntensity=night?(f?3:0.5):1; } });
+  // cozy neon signs + warm storefront glow
+  if(G.neonSigns){ const tnow=performance.now()*0.001;
+    for(const s of G.neonSigns){
+      let target = s.store ? (night?1.1:0.35) : (night?1.6:0.18);
+      if(night && s.flick){ target *= (Math.sin(tnow*7+s.phase)>0.82?0.3:1); }   // occasional neon flicker
+      const mat=s.mesh.material; mat.emissiveIntensity=lerp(mat.emissiveIntensity||0,target,0.08);
+    }
+  }
   if(G.puddleMat){ G.puddleMat.opacity = night?0.92:0.7; }
 }
 
