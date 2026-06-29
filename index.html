@@ -4957,30 +4957,91 @@ function updatePilotBoat(d,dt){
 }
 
 // =================== AIRFIELD & FLYABLE AIRCRAFT ===================
+// 16 flyable variants, each with its own speed + weapon feature.
+// fire modes: rocket (single), salvo (homing-style barrage), minigun (rapid
+// hitscan), bomb (heavy drop), cannon (AC-130 side gun).
+const AIRCRAFT_DEFS={
+  heli:      {name:'Transport Heli',   heli:true,  maxSpeed:34,  fire:'rocket',  rate:0.5,  color:0x4a525a},
+  littlebird:{name:'Little Bird',      heli:true,  maxSpeed:48,  fire:'minigun', rate:0.07, color:0x20242a, small:true},
+  apache:    {name:'AH-64 Apache',     heli:true,  maxSpeed:40,  fire:'salvo',   rate:0.7,  color:0x2b3036},
+  chinook:   {name:'CH-47 Chinook',    heli:true,  twin:true,   maxSpeed:30,  fire:'rocket',  rate:0.6, color:0x3a4a2e, tanky:true},
+  osprey:    {name:'V-22 Osprey',      vtol:true,  maxSpeed:60,  fire:'rocket',  rate:0.5,  color:0x44484e},
+  harrier:   {name:'AV-8 Harrier',     vtol:true,  maxSpeed:66,  fire:'salvo',   rate:0.7,  color:0x586068},
+  f16:       {name:'F-16 Falcon',                  maxSpeed:72,  fire:'rocket',  rate:0.6,  color:0x6a7078},
+  f22:       {name:'F-22 Raptor',                  maxSpeed:92,  fire:'salvo',   rate:0.5,  color:0x4c525c, stealth:true},
+  f35:       {name:'F-35 Lightning',               maxSpeed:80,  fire:'salvo',   rate:0.6,  color:0x3c4048, stealth:true},
+  su57:      {name:'Su-57 Felon',                  maxSpeed:94,  fire:'salvo',   rate:0.5,  color:0x55504e, stealth:true},
+  blackbird: {name:'SR-71 Blackbird',              maxSpeed:135, fire:'rocket',  rate:0.8,  color:0x141414},
+  b2:        {name:'B-2 Spirit',                   maxSpeed:60,  fire:'bomb',    rate:1.5,  color:0x2b2e33, wide:true},
+  ac130:     {name:'AC-130 Gunship',               maxSpeed:48,  fire:'cannon',  rate:0.12, color:0x3a473a, big:true},
+  concorde:  {name:'Concorde',                     maxSpeed:115, fire:'rocket',  rate:0.9,  color:0xe8e8ee, big:true},
+  drone:     {name:'MQ-9 Drone',                   maxSpeed:54,  fire:'salvo',   rate:1.0,  color:0xbfc3c8, small:true},
+  biplane:   {name:'Biplane',                      maxSpeed:30,  fire:'minigun', rate:0.1,  color:0xa8442e},
+};
 function buildAircraft(type){
+  const def=AIRCRAFT_DEFS[type]||AIRCRAFT_DEFS.f16;
   const g=new THREE.Group();
-  const grey=new THREE.MeshStandardMaterial({color:0x5a606a,metalness:0.5,roughness:0.45});
-  const dark=new THREE.MeshStandardMaterial({color:0x2b3036,metalness:0.4,roughness:0.6});
-  if(type==='heli'||type==='apache'){
-    const body=new THREE.Mesh(new THREE.BoxGeometry(2.4,1.6,4.5),type==='apache'?dark:grey); body.castShadow=!LOW; g.add(body);
-    const tail=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,3.5),dark); tail.position.set(0,0.3,-3.5); g.add(tail);
-    const rotor=new THREE.Group(); for(let i=0;i<2;i++){ const bl=new THREE.Mesh(new THREE.BoxGeometry(9,0.08,0.4),new THREE.MeshStandardMaterial({color:0x222222})); bl.rotation.y=i*Math.PI/2; rotor.add(bl); }
-    rotor.position.y=1.1; g.add(rotor); g.userData.rotor=rotor;
-    const skidL=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.15,3),dark); skidL.position.set(-0.9,-1,0); g.add(skidL);
+  const body=new THREE.MeshStandardMaterial({color:def.color,metalness:0.45,roughness:0.5});
+  const dark=new THREE.MeshStandardMaterial({color:0x222428,metalness:0.4,roughness:0.6});
+  const mkRotor=(zoff,span)=>{ const r=new THREE.Group(); for(let i=0;i<2;i++){ const bl=new THREE.Mesh(new THREE.BoxGeometry(span,0.08,0.4),dark); bl.rotation.y=i*Math.PI/2; r.add(bl);} r.position.set(0,1.1,zoff||0); g.add(r); return r; };
+  if(def.heli){
+    const bodyL=def.tanky?5.5:(def.small?3:4.5), bodyW=def.small?1.6:2.4;
+    const fus=new THREE.Mesh(new THREE.BoxGeometry(bodyW,1.5,bodyL),body); g.add(fus);
+    const tail=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.4,bodyL),body); tail.position.set(0,0.3,-bodyL); g.add(tail);
+    g.userData.rotor=mkRotor(def.twin?bodyL*0.4:0, def.small?6:9);
+    if(def.twin) g.userData.rotor2=mkRotor(-bodyL*0.4, 9);
+    const skidL=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.15,bodyL*0.7),dark); skidL.position.set(-0.9,-1,0); g.add(skidL);
     const skidR=skidL.clone(); skidR.position.x=0.9; g.add(skidR);
     if(type==='apache'){ const wing=new THREE.Mesh(new THREE.BoxGeometry(4.4,0.15,0.7),dark); wing.position.set(0,-0.2,0.4); g.add(wing);
       [-1.7,1.7].forEach(wx=>{ const pod=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.4,1.4),new THREE.MeshStandardMaterial({color:0x14140f})); pod.position.set(wx,-0.35,0.4); g.add(pod); }); }
-    g.userData.heli=true;
+  } else if(type==='b2'){
+    const wing=new THREE.Mesh(new THREE.ConeGeometry(7,3.4,3),body); wing.rotation.x=Math.PI/2; wing.scale.set(1,0.12,1); g.add(wing);
+    const cock=new THREE.Mesh(new THREE.SphereGeometry(0.8,8,6),body); cock.scale.set(1,0.5,1.6); cock.position.set(0,0.35,0.6); g.add(cock);
+  } else if(type==='ac130'){
+    const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.9,0.7,9,10),body); fus.rotation.x=Math.PI/2; g.add(fus);
+    const nose=new THREE.Mesh(new THREE.SphereGeometry(0.9,8,8),body); nose.position.z=4.6; g.add(nose);
+    const wing=new THREE.Mesh(new THREE.BoxGeometry(13,0.2,2),body); wing.position.set(0,0.7,0.5); g.add(wing);
+    [-4.5,-1.7,1.7,4.5].forEach(px=>{ const e=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,1),dark); e.position.set(px,0.65,1.5); g.add(e); const pr=new THREE.Mesh(new THREE.BoxGeometry(0.1,2,0.1),dark); pr.position.set(px,0.65,2.1); g.add(pr); });
+    const tail=new THREE.Mesh(new THREE.BoxGeometry(0.2,2.2,1.4),body); tail.position.set(0,1.3,-4.2); g.add(tail);
+    const gun=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,2,8),dark); gun.rotation.z=Math.PI/2; gun.position.set(-1.1,-0.2,-1); g.add(gun);
+  } else if(type==='concorde'){
+    const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.38,12,10),body); fus.rotation.x=Math.PI/2; g.add(fus);
+    const nose=new THREE.Mesh(new THREE.ConeGeometry(0.38,2.6,8),body); nose.position.set(0,-0.1,7.3); nose.rotation.x=-Math.PI/2+0.18; g.add(nose);
+    const wing=new THREE.Mesh(new THREE.ConeGeometry(3.4,8,3),body); wing.rotation.x=Math.PI/2; wing.scale.set(1,0.1,1); wing.position.z=-1; g.add(wing);
+    const fin=new THREE.Mesh(new THREE.BoxGeometry(0.12,2.2,2),body); fin.position.set(0,1.1,-5); g.add(fin);
+  } else if(type==='drone'){
+    const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.26,0.2,4,8),body); fus.rotation.x=Math.PI/2; g.add(fus);
+    const nose=new THREE.Mesh(new THREE.SphereGeometry(0.32,8,8),body); nose.position.z=2.1; g.add(nose);
+    const wing=new THREE.Mesh(new THREE.BoxGeometry(8,0.1,0.7),body); g.add(wing);
+    const v1=new THREE.Mesh(new THREE.BoxGeometry(0.1,1,1),body); v1.position.set(0.8,-0.4,-1.8); v1.rotation.z=-0.5; g.add(v1);
+    const v2=v1.clone(); v2.position.x=-0.8; v2.rotation.z=0.5; g.add(v2);
+    g.userData.prop=(()=>{ const p=new THREE.Mesh(new THREE.BoxGeometry(0.1,1.4,0.1),dark); p.position.z=-2; g.add(p); return p; })();
+    [-1.6,1.6].forEach(wx=>{ const pod=new THREE.Mesh(new THREE.BoxGeometry(0.25,0.25,1),dark); pod.position.set(wx,-0.25,0); g.add(pod); });
+  } else if(type==='biplane'){
+    const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.4,0.3,4,8),body); fus.rotation.x=Math.PI/2; g.add(fus);
+    const w1=new THREE.Mesh(new THREE.BoxGeometry(7,0.12,1.2),body); w1.position.set(0,0.7,0.3); g.add(w1);
+    const w2=new THREE.Mesh(new THREE.BoxGeometry(7,0.12,1.2),body); w2.position.set(0,-0.4,0.3); g.add(w2);
+    const tail=new THREE.Mesh(new THREE.BoxGeometry(2.4,0.1,1),body); tail.position.z=-2; g.add(tail);
+    const fin=new THREE.Mesh(new THREE.BoxGeometry(0.1,1,1),body); fin.position.set(0,0.4,-2); g.add(fin);
+    g.userData.prop=(()=>{ const p=new THREE.Mesh(new THREE.BoxGeometry(0.1,2,0.1),dark); p.position.z=2.1; g.add(p); return p; })();
+  } else if(type==='blackbird'){
+    const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.45,0.3,11,8),body); fus.rotation.x=Math.PI/2; g.add(fus);
+    const nose=new THREE.Mesh(new THREE.ConeGeometry(0.45,3,8),body); nose.rotation.x=-Math.PI/2; nose.position.z=6.5; g.add(nose);
+    const wing=new THREE.Mesh(new THREE.ConeGeometry(3,7,3),body); wing.rotation.x=Math.PI/2; wing.scale.set(1,0.1,1); wing.position.z=-1.5; g.add(wing);
+    [-1.6,1.6].forEach(ex=>{ const eng=new THREE.Mesh(new THREE.CylinderGeometry(0.4,0.4,3,8),body); eng.rotation.x=Math.PI/2; eng.position.set(ex,0,-1.5); g.add(eng); });
+    const flame=new THREE.Mesh(new THREE.ConeGeometry(0.34,1.6,8),new THREE.MeshBasicMaterial({color:0x66ccff})); flame.rotation.x=Math.PI/2; flame.position.z=-5.6; g.add(flame); g.userData.flame=flame;
   } else {
-    // jets: f16 / f35
-    const mat = type==='f35'?new THREE.MeshStandardMaterial({color:0x3c4048,metalness:0.4,roughness:0.55}):grey;
-    const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.32,7,8),mat); fus.rotation.x=Math.PI/2; g.add(fus);
-    const nose=new THREE.Mesh(new THREE.ConeGeometry(0.5,1.6,8),mat); nose.rotation.x=-Math.PI/2; nose.position.z=4; g.add(nose);
-    const wing=new THREE.Mesh(new THREE.BoxGeometry(type==='f35'?7.5:7,0.16,type==='f35'?2.8:2.2),mat); wing.position.z=-0.5; g.add(wing);
-    const tailW=new THREE.Mesh(new THREE.BoxGeometry(2.6,0.12,1),mat); tailW.position.z=-3; g.add(tailW);
-    const fin=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.4,1.4),mat); fin.position.set(type==='f35'?0.5:0,0.7,-3); g.add(fin);
-    if(type==='f35'){ const fin2=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.4,1.4),mat); fin2.position.set(-0.5,0.7,-3); g.add(fin2); }
-    const flame=new THREE.Mesh(new THREE.ConeGeometry(0.34,1.4,8),new THREE.MeshBasicMaterial({color:0xffaa33})); flame.rotation.x=Math.PI/2; flame.position.z=-4; g.add(flame); g.userData.flame=flame;
+    // generic fighter (f16/f22/f35/su57/harrier/osprey)
+    const len=def.big?9:7;
+    const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.32,len,8),body); fus.rotation.x=Math.PI/2; g.add(fus);
+    const nose=new THREE.Mesh(new THREE.ConeGeometry(0.5,1.6,8),body); nose.rotation.x=-Math.PI/2; nose.position.z=len/2+0.4; g.add(nose);
+    const wspan=def.wide?9:(def.stealth?8:7);
+    const wing=new THREE.Mesh(new THREE.BoxGeometry(wspan,0.16,2.6),body); wing.position.z=-0.5; g.add(wing);
+    const tailW=new THREE.Mesh(new THREE.BoxGeometry(2.8,0.12,1),body); tailW.position.z=-len/2+0.3; g.add(tailW);
+    if(def.stealth){ [-0.5,0.5].forEach(fx=>{ const fin=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.4,1.3),body); fin.position.set(fx,0.6,-len/2+0.5); fin.rotation.z=fx*0.3; g.add(fin); }); }
+    else { const fin=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.4,1.4),body); fin.position.set(0,0.7,-len/2+0.5); g.add(fin); }
+    if(type==='osprey'){ [-wspan/2+0.5,wspan/2-0.5].forEach(nx=>{ const rot=new THREE.Mesh(new THREE.BoxGeometry(0.1,3,0.4),dark); rot.position.set(nx,0.5,0.3); g.add(rot); }); }
+    const flame=new THREE.Mesh(new THREE.ConeGeometry(0.34,1.4,8),new THREE.MeshBasicMaterial({color:0xffaa33})); flame.rotation.x=Math.PI/2; flame.position.z=-len/2; g.add(flame); g.userData.flame=flame;
   }
   g.traverse(o=>{ if(o.isMesh) o.castShadow=!LOW; });
   return g;
@@ -4995,21 +5056,26 @@ function makeAirfield(){
   // a couple of hangars
   for(let h=-1;h<=1;h+=2){ const hangar=new THREE.Mesh(new THREE.BoxGeometry(34,16,30),new THREE.MeshStandardMaterial({color:0x6a6e74,metalness:0.3,roughness:0.7})); hangar.position.set(cx-70,8,cz+h*45); hangar.castShadow=!LOW; G.scene.add(hangar);
     G.buildingAABBs.push({minX:cx-70-17,maxX:cx-70+17,minZ:cz+h*45-15,maxZ:cz+h*45+15,minY:0,maxY:16,mesh:hangar}); }
-  // parked, flyable aircraft
+  // parked, flyable aircraft — the full fleet, in two rows along the apron
   G.aircraftPark=[];
-  const fleet=[['heli',-50],['apache',-18],['f16',16],['f35',50]];
-  fleet.forEach(([type,oz])=>{ const grp=buildAircraft(type); grp.position.set(cx,(type==='heli'||type==='apache')?1.2:0.6,cz+oz); grp.rotation.y=Math.PI; G.scene.add(grp);
-    G.aircraftPark.push({group:grp,type,taken:false,x:cx,z:cz+oz}); });
+  const fleet=Object.keys(AIRCRAFT_DEFS);
+  const perRow=Math.ceil(fleet.length/2), gap=11;
+  fleet.forEach((type,i)=>{ const def=AIRCRAFT_DEFS[type];
+    const row=Math.floor(i/perRow), col=i%perRow;
+    const ox=cx + (row===0?-30:30);
+    const oz=cz - (perRow-1)*gap/2 + col*gap;
+    const grp=buildAircraft(type); grp.position.set(ox,(def.heli?1.2:0.6),oz); grp.rotation.y=Math.PI; G.scene.add(grp);
+    G.aircraftPark.push({group:grp,type,taken:false,x:ox,z:oz}); });
   G.markers.push({x:cx,z:cz,type:'airfield'});
   G.airfield={x:cx,z:cz};
 }
 function enterAircraft(a){
-  a.taken=true;
-  G.player.inAircraft={obj:a, group:a.group, type:a.type, speed:0, vy:0, alt:a.group.position.y, climb:0, fireCD:0,
-    heli:(a.type==='heli'||a.type==='apache'), maxSpeed:(a.type==='f35'?80:(a.type==='f16'?70:34))};
+  a.taken=true; const def=AIRCRAFT_DEFS[a.type]||AIRCRAFT_DEFS.f16;
+  G.player.inAircraft={obj:a, group:a.group, type:a.type, def, speed:0, vy:0, climb:0, fireCD:0,
+    heli:!!(def.heli||def.vtol), maxSpeed:def.maxSpeed, fire:def.fire, rate:def.rate};
   G.player.mesh.visible=false;
-  showVehName(a.type.toUpperCase());
-  toast('Throttle: W/Up · Climb: SPACE/JUMP · Down: SHIFT · Fire: hold FIRE · Exit: F (land first)');
+  showVehName(def.name);
+  toast('Throttle W/Up · Climb SPACE/JUMP · Down SHIFT · Yaw A/D · Fire: hold FIRE · Exit F (land first)');
 }
 function exitAircraft(){
   const ac=G.player.inAircraft; if(!ac) return;
@@ -5044,11 +5110,25 @@ function updateAircraft(dt){
   g.rotation.z=lerp(g.rotation.z,-yaw*0.4,0.1);
   g.rotation.x=lerp(g.rotation.x, ac.heli?(ac.speed/ac.maxSpeed)*0.2 : -climb*0.15,0.1);
   if(g.userData.rotor) g.userData.rotor.rotation.y+=dt*30;
-  // weapons
+  if(g.userData.rotor2) g.userData.rotor2.rotation.y-=dt*30;
+  if(g.userData.prop) g.userData.prop.rotation.z+=dt*40;
+  // weapons (each variant has its own feature)
   ac.fireCD-=dt;
-  if(G.mouse.down && ac.fireCD<=0){ ac.fireCD=ac.heli?0.5:0.7;
+  if(G.mouse.down && ac.fireCD<=0){
     const o=new THREE.Vector3(g.position.x+fx*3, g.position.y-0.3, g.position.z+fz*3);
-    const d=new THREE.Vector3(fx,-0.05,fz).normalize(); spawnRocket(o,d,{explosive:true}); G.audio.explosion();
+    const d=new THREE.Vector3(fx,-0.05,fz).normalize();
+    if(ac.fire==='minigun'){ ac.fireCD=ac.rate||0.08; hitscan(o,d,170,11); spawnTracer(o,d); G.audio.gunshot('rifle');
+      G.particles.burst(o.x+d.x*1.5,o.y,o.z+d.z*1.5,'muzzle',2); }
+    else if(ac.fire==='cannon'){ ac.fireCD=ac.rate||0.12; // AC-130 banks left & rains shells down
+      const sd=new THREE.Vector3(-Math.cos(g.rotation.y),-0.55,Math.sin(g.rotation.y)).normalize();
+      const so=new THREE.Vector3(g.position.x-Math.cos(g.rotation.y)*1.2, g.position.y-0.5, g.position.z+Math.sin(g.rotation.y)*1.2);
+      spawnRocket(so,sd,{explosive:true}); G.audio.explosion(); }
+    else if(ac.fire==='bomb'){ ac.fireCD=ac.rate||1.5;
+      spawnRocket(new THREE.Vector3(g.position.x,g.position.y-1,g.position.z), new THREE.Vector3(0,-1,0.05).normalize(),{explosive:true,power:true}); G.audio.explosion(); }
+    else if(ac.fire==='salvo'){ ac.fireCD=ac.rate||0.6;
+      const gt=nearestGroundEnemyTo(g.position,320);
+      fireSalvo({x:o.x,y:o.y,z:o.z}, gt?gt.pos:{x:o.x+fx*70,y:1,z:o.z+fz*70}, LOW?2:3, 0.6); }
+    else { ac.fireCD=ac.rate||0.6; spawnRocket(o,d,{explosive:true}); G.audio.explosion(); }
   }
   G.audio.setEngine(Math.abs(ac.speed),ac.maxSpeed);
   UI.speed.textContent=Math.round(Math.abs(ac.speed)*2.23)+' MPH  ·  ALT '+Math.round(g.position.y)+'m';
