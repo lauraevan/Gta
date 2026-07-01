@@ -52,6 +52,7 @@
   @keyframes starflash { 50% { color:#fff; } }
   #money { font-size: 30px; color: #4cff4c; margin-top: 4px; }
   #ammo { font-size: 22px; margin-top: 4px; color:#fff; }
+  #packages { font-size: 15px; margin-top: 4px; color:#ffd24a; }
   #ammo .wname { font-size: 13px; color:#bbb; display:block; }
 
   #botleft { position: absolute; bottom: 14px; left: 14px; }
@@ -176,6 +177,7 @@
     <div id="stars"></div>
     <div id="money" class="hudshadow">$1,000</div>
     <div id="ammo" class="hudshadow"></div>
+    <div id="packages" class="hudshadow"></div>
   </div>
   <div id="botleft">
     <canvas id="minimap" width="160" height="160"></canvas>
@@ -4396,7 +4398,71 @@ function* generateWorld(){
   yield 'Building the airfield…';
   makeAirfield();
 
+  yield 'Hiding secrets…';
+  spawnHiddenPackages();
+  spawnGraffiti();
+
   yield 'Done';
+}
+// ---- Hidden collectible packages (GTA-style secret pickups) ----
+function spawnHiddenPackages(){
+  G.packages=[]; G.packagesFound=0;
+  const half=G.CITY/2, offset=-half+CELL/2;
+  const N=24;
+  for(let i=0;i<N;i++){
+    // tuck them in back-alley spots between blocks (off the main road centres)
+    const gi=randi(0,GRID-1), gj=randi(0,GRID-1);
+    const x=offset+gi*CELL+rand(-26,26), z=offset+gj*CELL+rand(-26,26);
+    const onRoof=Math.random()<0.35;
+    const y=onRoof?rand(16,40):1.2;
+    const g=new THREE.Group();
+    const core=new THREE.Mesh(new THREE.OctahedronGeometry(0.6),
+      new THREE.MeshStandardMaterial({color:0xffcf3a,emissive:0xffa010,emissiveIntensity:0.9,metalness:0.6,roughness:0.3}));
+    g.add(core);
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(0.9,0.06,6,20),
+      new THREE.MeshStandardMaterial({color:0xfff2b0,emissive:0xffcf3a,emissiveIntensity:0.7}));
+    ring.rotation.x=Math.PI/2; g.add(ring);
+    g.position.set(x,y,z); G.scene.add(g);
+    G.packages.push({mesh:g,core,ring,x,y,z,phase:Math.random()*TAU,got:false});
+  }
+  updatePackageHUD();
+}
+function updatePackageHUD(){ const el=document.getElementById('packages');
+  if(el && G.packages) el.textContent='📦 '+G.packagesFound+' / '+G.packages.length; }
+function updatePackages(dt){
+  if(!G.packages) return;
+  const pp=G.player.inVehicle?G.player.inVehicle.position:G.player.mesh.position;
+  for(const pk of G.packages){ if(pk.got) continue;
+    pk.phase+=dt; pk.mesh.rotation.y+=dt*1.6; pk.ring.rotation.z+=dt*1.2;
+    pk.mesh.position.y=pk.y+Math.sin(pk.phase*1.5)*0.25;
+    if(Math.hypot(pp.x-pk.x,pp.z-pk.z)<2.4 && Math.abs(pp.y-pk.y)<6){
+      pk.got=true; pk.mesh.visible=false; G.packagesFound++;
+      const reward=500; G.money+=reward;
+      G.particles.burst(pk.x,pk.y,pk.z,'spark',10);
+      G.audio.pickup&&G.audio.pickup();
+      updatePackageHUD();
+      if(G.packagesFound>=G.packages.length){ bigMsg('ALL PACKAGES FOUND! +$25,000','#ffd24a'); G.money+=25000; }
+      else bigMsg('HIDDEN PACKAGE '+G.packagesFound+'/'+G.packages.length+'  +$'+reward,'#ffd24a');
+    }
+  }
+}
+// ---- Graffiti murals baked as emissive-ish decals on alley walls ----
+function spawnGraffiti(){
+  const half=G.CITY/2, offset=-half+CELL/2;
+  const cols=[0xff3b7b,0x35e6ff,0x7df04a,0xffcf3a,0xb45cff,0xff7a1a];
+  const N=LOW?8:16;
+  for(let i=0;i<N;i++){
+    const gi=randi(0,GRID-1), gj=randi(0,GRID-1);
+    const x=offset+gi*CELL+rand(-24,24), z=offset+gj*CELL+rand(-24,24);
+    const c1=choice(cols), c2=choice(cols);
+    const cv=document.createElement('canvas'); cv.width=64; cv.height=32; const g=cv.getContext('2d');
+    g.fillStyle='rgba(0,0,0,0)'; g.fillRect(0,0,64,32);
+    for(let k=0;k<6;k++){ g.strokeStyle='#'+new THREE.Color(k%2?c1:c2).getHexString(); g.lineWidth=rand(2,5);
+      g.beginPath(); g.moveTo(rand(2,20),rand(4,28)); g.bezierCurveTo(rand(10,30),rand(0,32),rand(30,54),rand(0,32),rand(44,62),rand(4,28)); g.stroke(); }
+    const tex=new THREE.CanvasTexture(cv);
+    const m=new THREE.Mesh(new THREE.PlaneGeometry(4,2),new THREE.MeshStandardMaterial({map:tex,transparent:true,emissive:0xffffff,emissiveMap:tex,emissiveIntensity:0.25,roughness:1}));
+    m.position.set(x,rand(1.5,3),z); m.rotation.y=randi(0,3)*Math.PI/2; G.scene.add(m);
+  }
 }
 
 function addAABB(mesh,w,h,d){
@@ -4410,37 +4476,70 @@ function addAABB(mesh,w,h,d){
    Each represents ONE floor of windows and is tiled per-building via UV repeat
    on a cloned texture (the underlying image/source is shared = cheap on GPU). */
 const FACADE_STYLES=[
-  {name:'glass',   base:'#3a4a5a', win:'#7fb0c8', frame:'#2a3540', lit:'#ffe9a8', wide:true},
-  {name:'glassB',  base:'#243240', win:'#4a8fa8', frame:'#16202a', lit:'#ffd070', wide:true},
-  {name:'office',  base:'#8a8a82', win:'#5b6b72', frame:'#6a6a62', lit:'#fff0c0'},
-  {name:'concrete',base:'#9a9488', win:'#4a525a', frame:'#7a766c', lit:'#ffe7b0'},
-  {name:'brick',   base:'#8B3A3A', win:'#2b3138', frame:'#5a2727', lit:'#ffd9a0', small:true},
-  {name:'brickT',  base:'#6b4a3a', win:'#26303a', frame:'#46302a', lit:'#ffcf90', small:true},
+  {name:'glass',   base:'#38485a', win:'#8fb8cf', frame:'#28323e', lit:'#ffe6a0', sky:'#b8d4ea', wide:true},
+  {name:'glassB',  base:'#243240', win:'#4f93ac', frame:'#16202a', lit:'#ffd070', sky:'#7fa8c4', wide:true},
+  {name:'office',  base:'#8f8f86', win:'#63747c', frame:'#6a6a62', lit:'#fff0c0', sky:'#9fb4bd'},
+  {name:'concrete',base:'#9a9488', win:'#4a525a', frame:'#7a766c', lit:'#ffe7b0', sky:'#7f909a'},
+  {name:'brick',   base:'#8B3A3A', win:'#2b3138', frame:'#5a2727', lit:'#ffd9a0', sky:'#6a7a86', small:true, brick:true},
+  {name:'brickT',  base:'#6b4a3a', win:'#26303a', frame:'#46302a', lit:'#ffcf90', sky:'#5a6a76', small:true, brick:true},
 ];
+// tiny colour helpers for baking depth/AO into the facade canvas
+function shadeHex(hex,d){ const c=new THREE.Color(hex); const k=d/255;
+  return '#'+new THREE.Color(clamp(c.r+k,0,1),clamp(c.g+k,0,1),clamp(c.b+k,0,1)).getHexString(); }
+const LIT_COLS=['#ffe6a0','#ffd070','#fff0c8','#ffcf80','#e6efff','#ffdca0'];
 let FACADES=null;
 function buildFacades(){
   if(FACADES) return FACADES;
   FACADES=FACADE_STYLES.map(s=>{
-    const W=128,H=128;
+    const W=256,H=256;
     const ac=document.createElement('canvas'); ac.width=W; ac.height=H; const a=ac.getContext('2d');
     const ec=document.createElement('canvas'); ec.width=W; ec.height=H; const e=ec.getContext('2d');
     a.fillStyle=s.base; a.fillRect(0,0,W,H);
     e.fillStyle='#000'; e.fillRect(0,0,W,H);
-    const cols=s.wide?3:(s.small?5:4), rows=s.small?6:4;
-    const pad=s.small?3:6, gx=W/cols, gy=H/rows;
-    for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
-      const x=c*gx+pad, y=r*gy+pad, ww=gx-pad*2, hh=gy-pad*2;
-      a.fillStyle=s.frame; a.fillRect(c*gx+1,r*gy+1,gx-2,gy-2);
-      a.fillStyle=s.win;   a.fillRect(x,y,ww,hh);
-      // subtle glass reflection streak
-      a.fillStyle='rgba(255,255,255,0.07)'; a.fillRect(x,y,ww*0.4,hh);
-      // night: ~35% windows lit
-      if(Math.random()<0.35){ e.fillStyle=s.lit; e.fillRect(x,y,ww,hh); }
+    // --- wall material ---
+    if(s.brick){
+      const bh=9, bw=28;
+      for(let yy=0,row=0; yy<H; yy+=bh,row++){
+        for(let xx=(row%2?-bw/2:0); xx<W; xx+=bw){
+          a.fillStyle=shadeHex(s.base, rand(-14,12)); a.fillRect(xx+1,yy+1,bw-2,bh-2);
+        }
+      }
+    } else {
+      // concrete/panel speckle + faint panel seams
+      for(let i=0;i<140;i++){ a.fillStyle='rgba(255,255,255,'+(Math.random()*0.03)+')'; a.fillRect(rand(0,W),rand(0,H),rand(1,3),rand(1,3)); }
+      a.fillStyle='rgba(0,0,0,0.05)'; for(let sx=0;sx<W;sx+=W/4) a.fillRect(sx,0,1,H);
     }
-    // grime overlay
-    a.fillStyle='rgba(0,0,0,0.12)';
-    for(let i=0;i<30;i++) a.fillRect(rand(0,W),rand(0,H),rand(2,18),rand(2,6));
-    const map=new THREE.CanvasTexture(ac); map.wrapS=map.wrapT=THREE.RepeatWrapping; map.anisotropy=2;
+    const cols=s.wide?3:(s.small?5:4), rows=s.small?6:4;
+    const gx=W/cols, gy=H/rows, pad=s.small?4:9;
+    for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+      const fx=c*gx, fy=r*gy, x=fx+pad, y=fy+pad, ww=gx-pad*2, hh=gy-pad*2;
+      // beveled frame: light top-left, dark bottom-right → reads as recessed
+      a.fillStyle=s.frame; a.fillRect(fx+2,fy+2,gx-4,gy-4);
+      a.fillStyle='rgba(255,255,255,0.10)'; a.fillRect(fx+2,fy+2,gx-4,2); a.fillRect(fx+2,fy+2,2,gy-4);
+      a.fillStyle='rgba(0,0,0,0.38)'; a.fillRect(fx+2,fy+gy-4,gx-4,2); a.fillRect(fx+gx-4,fy+2,2,gy-4);
+      // glass pane with a vertical sky→shadow gradient
+      const g=a.createLinearGradient(0,y,0,y+hh);
+      g.addColorStop(0,s.sky||s.win); g.addColorStop(0.45,s.win); g.addColorStop(1,shadeHex(s.win,-30));
+      a.fillStyle=g; a.fillRect(x,y,ww,hh);
+      // diagonal reflection highlight
+      a.save(); a.beginPath(); a.rect(x,y,ww,hh); a.clip();
+      a.fillStyle='rgba(255,255,255,0.13)';
+      a.beginPath(); a.moveTo(x-hh,y+hh); a.lineTo(x-hh+ww*0.45,y); a.lineTo(x-hh+ww*0.72,y); a.lineTo(x-hh+ww*0.27,y+hh); a.closePath(); a.fill();
+      a.restore();
+      // mullions (window dividers)
+      a.fillStyle=shadeHex(s.frame,14); a.fillRect(x+ww/2-1,y,2,hh); a.fillRect(x,y+hh/2-1,ww,2);
+      // sill highlight + grime streak beneath
+      a.fillStyle='rgba(255,255,255,0.10)'; a.fillRect(fx+1,fy+gy-3,gx-2,2);
+      a.fillStyle='rgba(0,0,0,0.10)'; a.fillRect(x+ww*0.15,y+hh,ww*0.7,Math.min(gy*0.22,6));
+      // night emissive: some fully lit, a few half-lit
+      const rl=Math.random();
+      if(rl<0.28){ e.fillStyle=choice(LIT_COLS); e.fillRect(x,y,ww,hh); }
+      else if(rl<0.35){ e.fillStyle=choice(LIT_COLS); e.fillRect(x,y+hh*0.5,ww,hh*0.5); }
+    }
+    // long vertical dirt streaks over everything
+    a.fillStyle='rgba(0,0,0,0.06)';
+    for(let i=0;i<22;i++){ const xx=rand(0,W); a.fillRect(xx,rand(0,H*0.4),rand(1,3),rand(24,H*0.6)); }
+    const map=new THREE.CanvasTexture(ac); map.wrapS=map.wrapT=THREE.RepeatWrapping; map.anisotropy=LOW?2:8;
     const emap=new THREE.CanvasTexture(ec); emap.wrapS=emap.wrapT=THREE.RepeatWrapping;
     return {style:s, map, emap};
   });
@@ -4482,11 +4581,29 @@ function makeBuilding(x,z,w,d,h,opts){
   G.scene.add(m); G.buildings.push(m);
   m.userData.winMat=mat; m.userData.h=h;
   addAABB(m,w,h,d);
-  // ground-floor storefront band (darker, with awning hint) — skipped on mobile
-  if(h>14 && !LOW){
-    const base=new THREE.Mesh(new THREE.BoxGeometry(w+0.3,4,d+0.3),
-      new THREE.MeshStandardMaterial({color:0x1c1c20,roughness:0.6,metalness:0.2}));
-    base.position.set(x,2,z); base.castShadow=true; G.scene.add(base);
+  // Architectural detail — desktop only (mobile relies on the richer baked facades).
+  if(!LOW){
+    const brick=fac.style.brick;
+    // ground-floor plinth / storefront band (darker stone)
+    if(h>14){
+      const base=new THREE.Mesh(new THREE.BoxGeometry(w+0.3,4,d+0.3),
+        new THREE.MeshStandardMaterial({color:0x1c1c20,roughness:0.6,metalness:0.2}));
+      base.position.set(x,2,z); base.castShadow=true; base.receiveShadow=true; G.scene.add(base);
+      // recessed entrance + glass doors on the +Z (street) face
+      const dw=Math.min(w*0.42,4.5);
+      const canopy=new THREE.Mesh(new THREE.BoxGeometry(dw+1.2,0.35,2.0),new THREE.MeshStandardMaterial({color:0x24272e,roughness:0.7,metalness:0.3}));
+      canopy.position.set(x,3.5,z+d/2+0.9); canopy.castShadow=true; G.scene.add(canopy);
+      const doors=new THREE.Mesh(new THREE.BoxGeometry(dw,3,0.2),new THREE.MeshStandardMaterial({color:0x11202a,emissive:0x1a2e38,emissiveIntensity:0.35,roughness:0.2,metalness:0.4}));
+      doors.position.set(x,1.6,z+d/2+0.2); G.scene.add(doors);
+    }
+    // cornice cap that overhangs the roofline
+    const cap=new THREE.Mesh(new THREE.BoxGeometry(w+0.7,Math.min(1.2,h*0.05),d+0.7),
+      new THREE.MeshStandardMaterial({color:brick?0x4a3630:0x363a40,roughness:0.85}));
+    cap.position.set(x,h-0.2,z); cap.castShadow=true; cap.receiveShadow=true; G.scene.add(cap);
+    // a couple of horizontal ledge bands up tall facades (kept sparse for FPS)
+    if(h>50){ const ledgeMat=new THREE.MeshStandardMaterial({color:brick?0x5a4038:0x2f3237,roughness:0.85});
+      let n=0; for(let ly=Math.round(h/3); ly<h-6 && n<2; ly+=Math.round(h/3),n++){
+        const led=new THREE.Mesh(new THREE.BoxGeometry(w+0.25,0.5,d+0.25),ledgeMat); led.position.set(x,ly,z); led.castShadow=true; G.scene.add(led); } }
   }
   // rooftop details
   if(h>20 && Math.random()<0.6){
@@ -8028,6 +8145,7 @@ function loop(now){
     updateBullets(sdt);
     updateFireZones(sdt);
     updatePickups(sdt);
+    updatePackages(sdt);
     updateMission(sdt);
     updateWanted(sdt);
     updateDayNight(sdt);
